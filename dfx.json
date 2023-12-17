@@ -1,21 +1,12 @@
 {
   "canisters": {
     "Quotex_backend": {
-      "main": "src/Quotex_backend/main.mo",
+      "main": "src/main.mo",
       "type": "motoko"
     },
-    "Quotex_frontend": {
-      "dependencies": [
-        "Quotex_backend"
-      ],
-      "frontend": {
-        "entrypoint": "src/Quotex_frontend/src/index.html"
-      },
-      "source": [
-        "src/Quotex_frontend/assets",
-        "dist/Quotex_frontend/"
-      ],
-      "type": "assets"
+    "PriceFeed": {
+      "main": "src/PriceFeed.mo",
+      "type": "motoko"
     }
   },
   "defaults": {
