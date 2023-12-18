@@ -5,6 +5,7 @@ import HashMap "mo:base/HashMap";
 import Error "mo:base/Error";
 
 actor class Pool(admin : Principal, clearingHouse : Principal) {
+    type Token = ICRC.Token;
 
     type TokenDetails = {
         is_allowed : Bool;
@@ -20,7 +21,7 @@ actor class Pool(admin : Principal, clearingHouse : Principal) {
     };
 
     let tokendetails = HashMap.HashMap<Principal, TokenDetails>(1, Principal.equal, Principal.hash);
-    let isLiquidator = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
+    let isliquidator = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
 
     public query func getTokenDetails(_token : Principal) : async TokenDetails {
         let _tokendetails = switch (tokendetails.get(_token)) {
@@ -30,9 +31,14 @@ actor class Pool(admin : Principal, clearingHouse : Principal) {
     };
 
     public shared ({ caller }) func setOperator(operator : Principal, status : Bool) : async () {
-        isLiquidator.put(operator, status);
+        isliquidator.put(operator, status);
     };
-
+    public shared ({ caller }) func isLiquidator(operator : Principal) : async Bool {
+        let status = switch (isliquidator.get(operator)) {
+            case (?res) { res };
+            case (_) { false };
+        };
+    };
     public shared ({ caller }) func setToken(tokenPrincipal : Principal, status : TokenDetails) : async () {
         tokendetails.put(tokenPrincipal, status);
     };
@@ -52,7 +58,7 @@ actor class Pool(admin : Principal, clearingHouse : Principal) {
 
     public shared ({ caller }) func sendOutICRC(tokenPrincipal : Principal, to : Principal, amount : Nat) : async Nat {
         assert (isAllowed(caller));
-        let token : ICRC.ICRC = actor (Principal.toText(tokenPrincipal));
+        let token : Token = actor (Principal.toText(tokenPrincipal));
         let fee = await token.icrc1_fee();
         let sending_amount : Nat = amount - fee;
         let tx = await token.icrc1_transfer({

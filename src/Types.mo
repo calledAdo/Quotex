@@ -1,4 +1,5 @@
 import Text "mo:base/Text";
+import Int "mo:base/Int";
 
 module {
 
@@ -11,10 +12,10 @@ module {
     };
 
     public type TokenDetails = {
-        isAllowed : Bool;
-        minLeverage : Nat;
-        maxDebt : Nat;
-        marginFee : Nat;
+        is_allowed : Bool;
+        max_debt : Nat64;
+        min_collateral : Nat64;
+        margin_fee : Nat64;
     };
 
     public type Range = {
@@ -31,22 +32,25 @@ module {
     };
 
     public type OpenPositionParams = {
-        is_long : Bool;
         debt : Nat64;
         quote_id : Nat;
         pool_id : Nat;
         base_asset : Asset;
         collateral_amount : Nat64;
     };
-
+    public type ClosePositionParams = {
+        quote_asset : Asset;
+        position_id : Nat;
+        quote_id : Nat;
+    };
     public type Position = {
         asset_In : Asset;
         asset_out : Asset;
-        isLong : Bool;
         amount_in : Nat;
         debt_pool : Principal;
-        debt : Nat;
-        marginFee : Nat;
-        timestamp : Nat;
+        debt : Nat64;
+        marginFee : Nat64;
+        timestamp : Int;
+        owner : Principal;
     };
 };

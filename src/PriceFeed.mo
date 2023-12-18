@@ -18,7 +18,7 @@ import XRC "Interface/XRC";
 
 actor class PriceFeed(xrc : Principal) = {
 
-    type GetExchangeRateResult = XRC.GetExchangeRateResult;
+    public type GetExchangeRateResult = XRC.GetExchangeRateResult;
 
     type Factors = {
         deviation : Nat64;

@@ -1,43 +1,71 @@
-import Nat "mo:base/Nat";
 import Nat32 "mo:base/Nat32";
 import ExperimentalCycles "mo:base/ExperimentalCycles";
-import Principal "mo:base/Principal";
 import Error "mo:base/Error";
 import Nat64 "mo:base/Nat64";
+import Principal "mo:base/Principal";
+import Time "mo:base/Time";
+import Int "mo:base/Int";
 import ICRC "Interface/ICRC";
 import Main "main";
 import Types "Types";
 import Pool "Pool";
-import DIP20 "Interface/DIP20";
+
 import PriceFeed "PriceFeed";
+import XRC "Interface/XRC";
 
 actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
+    type ExchangeRate = XRC.ExchangeRate;
+
+    type Token = ICRC.Token;
 
     type Asset = Types.Asset;
 
     type TokenDetails = Types.TokenDetails;
 
-    public type OpenPositionParams = Types.OpenPositionParams;
+    type Quote = Types.Quote;
+
+    type Pool = Pool.Pool;
+
+    type OpenPositionParams = Types.OpenPositionParams;
+    type ClosePositionParams = Types.ClosePositionParams;
+
+    type Position = Types.Position;
 
     stable let main : Main.Main = actor (Principal.toText(mainPrincipal));
     stable let priceFeed : PriceFeed.PriceFeed = actor (Principal.toText(_priceFeed));
 
     stable let percentage_basis = Nat64.pow(10, 6);
     //gets the y percent of x where y is the intended percentage *  100_000 ,
-    private func _percent(x : Nat64, y : Nat64) : Nat64 {
+    private func _percent(x : Nat, y : Nat) : Nat {
         // product must be divided by 100_000 since y is multiple of 100_000
-        return (x * y) / percentage_basis;
+        return (x * y) / Nat64.toNat(percentage_basis);
     };
 
-    private func inRange(x : Nat64, min : Nat64, max : Nat64) : Bool {
+    private func calculateMarginFee(starttime : Int, current_time : Int, amount : Nat, fee : Nat) : Nat {
+        let duration : Int = current_time - starttime;
+        let interval : Int = switch (duration / 3600 >= 1) {
+            case (true) { duration / 3600 };
+            case (false) { 1 };
+        };
+        var fee = 0;
+        let counter = 0;
+        while (counter < interval) {
+            fee := amount - _percent(amount, fee);
+        };
+
+        return fee;
+    };
+
+    private func inRange(x : Nat, min : Nat, max : Nat) : Bool {
         return (x <= max and x >= min);
     };
 
     private func sendOut(_tokenPrincipal : Principal, amount : Nat, from : Principal, from_subaccount : ?Blob, to : Principal, to_subaccount : ?Blob) : async Nat {
 
-        let token : ICRC.ICRC = actor (Principal.toText(_tokenPrincipal));
+        let token : Token = actor (Principal.toText(_tokenPrincipal));
         let fee = await token.icrc1_fee();
         let tx = await token.icrc2_transfer_from({
+            spender_subaccount = null;
             from = { owner = from; subaccount = from_subaccount };
             to = { owner = to; subaccount = to_subaccount };
             amount = amount;
@@ -52,10 +80,11 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
     };
 
     private func sendIn(_tokenPrincipal : Principal, amount : Nat, to : Principal, subaccount : ?Blob) : async Nat {
-        let token : ICRC.ICRC = actor (Principal.toText(_tokenPrincipal));
+        let token : Token = actor (Principal.toText(_tokenPrincipal));
 
         let fee = await token.icrc1_fee();
         let tx = await token.icrc2_transfer_from({
+            spender_subaccount = null;
             from = { owner = mainPrincipal; subaccount = null };
             to = { owner = to; subaccount = subaccount };
             amount = amount;
@@ -70,27 +99,42 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
 
     };
 
-    private func paramsValid(params : OpenPositionParams) : async Bool {
+    private func isOpenPositionValid(params : OpenPositionParams) : async {
+        valid : Bool;
+        token_details : TokenDetails;
+    } {
         let quote = await main.getQuote(params.base_asset.id, params.quote_id);
-        let poolPrincipal = await main.getPool(params.pool_id);
-        let pool : Pool.Pool = actor (Principal.toText(poolPrincipal));
+        let pool_principal = await main.getPool(params.pool_id);
+        let pool : Pool.Pool = actor (Principal.toText(pool_principal));
         let tokenDetails = await pool.getTokenDetails(params.base_asset.id);
 
-        return (
-            tokenDetails.is_allowed and params.debt <= tokenDetails.max_debt and params.collateral_amount >= tokenDetails.min_collateral and inRange(params.debt, quote.range.min, quote.range.max)
-        );
+        return {
+            valid = tokenDetails.is_allowed and params.debt <= tokenDetails.max_debt and params.collateral_amount >= tokenDetails.min_collateral and inRange(Nat64.toNat(params.debt), Nat64.toNat(quote.range.min), Nat64.toNat(quote.range.max));
+            token_details = tokenDetails;
+        };
 
     };
 
+    private func isClosePositionValid(caller : Principal, params : ClosePositionParams) : async Bool {
+        let position : Position = await main.getPositionByID(params.quote_asset.id, params.position_id);
+        let quote : Quote = await main.getQuote(position.asset_In.id, params.quote_id);
+        let pool : Pool = actor (Principal.toText(position.debt_pool));
+        let allowed = caller == position.owner or (await pool.isLiquidator(caller));
+
+        return (inRange(position.amount_in, Nat64.toNat(quote.range.min), Nat64.toNat(quote.range.max)) and allowed and quote.quote_asset.id == position.asset_out.id);
+    };
+
     private func openPosition(caller : Principal, params : OpenPositionParams, subaccount : ?Blob) : async () {
+        //asserts all parameters are valid  check isOpenPositionValid to see full ilplemetation
+        let res = await isOpenPositionValid(params);
+        assert (res.valid == true);
 
-        assert (await paramsValid(params));
+        let pool_principal : Principal = await main.getPool(params.pool_id);
 
-        let poolID = await main.getPool(params.pool_id);
+        let quote : Quote = await main.getQuote(params.base_asset.id, params.quote_id);
 
-        let quote = await main.getQuote(params.base_asset.id, params.quote_id);
-
-        let currentRate = await priceFeed.get_exchange_rate({
+        //gets the current price rate based from the priceFeed contract
+        let current_rate : ExchangeRate = await priceFeed.get_exchange_rate({
             base_asset = {
                 symbol = params.base_asset.symbol;
                 class_ = params.base_asset.class_;
@@ -104,17 +148,86 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
 
         //converst the picedecimal to Nat64 for calculation
 
-        let priceDecimal : Nat64 = Nat32.toNat64(currentRate.metadata.decimals);
+        let price_decimal : Nat64 = Nat32.toNat64(current_rate.metadata.decimals);
+        // calculate the equivalent amount of base_asset equalin value to the quote asset amount
+        let exchange_value : Nat64 = (params.debt * current_rate.rate) / 10 ** price_decimal;
 
-        let exchangeValue : Nat64 = (params.debt * currentRate.rate) / 10 ** priceDecimal;
-        let quoteValue : Nat64 = _percent(exchangeValue, quote.offer);
+        //the value of quote
+        let quote_value : Nat = _percent(Nat64.toNat(exchange_value), Nat64.toNat(quote.offer));
+
+        let debt_pool = await main.getPool(params.pool_id);
 
         // token transactions
-        let tx1 = await sendIn(quote.quote_asset.id, Nat64.toNat(params.collateral_amount), caller, subaccount);
-        let tx2 = await sendIn(quote.quote_asset.id, Nat64.toNat(quoteValue), caller, null);
-        let tx3 = await sendOut(quote.quote_asset.id, Nat64.toNat(params.debt), quote.liq_provider_id, null, poolID, null);
+
+        //transfer collateral in from caller(trader)
+        let collateral_in : Nat = await sendIn(quote.quote_asset.id, Nat64.toNat(params.collateral_amount), caller, subaccount);
+
+        //transfer in the quote value from the quote liquidity provider
+        let provided_Liquidity : Nat = await sendIn(quote.quote_asset.id, quote_value, quote.liq_provider_id, null);
+
+        //transfer in the debt amount from
+        let debt_in : Nat = await sendOut(params.base_asset.id, Nat64.toNat(params.debt), debt_pool, null, pool_principal : Principal, null);
+
+        let position : Position = {
+            amount_in = collateral_in + provided_Liquidity;
+            asset_In = params.base_asset;
+            asset_out = quote.quote_asset;
+            debt = params.debt;
+            debt_pool = debt_pool;
+            marginFee = res.token_details.margin_fee;
+            timestamp = Time.now();
+            owner = caller;
+        };
+
+        //store position
+        await main.storePosition(params.base_asset.id, position, caller);
+        //remove Quote
+        await main.removeQuote(params.base_asset.id, params.quote_id);
     };
 
-    private func closePosition(caller : Principal, _poolID : Nat) : async () {};
-    public shared ({ caller }) func liquidatePosition() : async () {};
+    private func closePosition(caller : Principal, params : ClosePositionParams) : async () {
+        let position : Position = await main.getPositionByID(params.quote_asset.id, params.position_id);
+        let quote : Quote = await main.getQuote(position.asset_In.id, params.quote_id);
+        assert (await isClosePositionValid(caller, params));
+
+        let current_rate : ExchangeRate = await priceFeed.get_exchange_rate({
+            base_asset = {
+                symbol = position.asset_out.symbol;
+                class_ = position.asset_out.class_;
+            };
+            quote_asset = {
+                symbol = position.asset_In.symbol;
+                class_ = position.asset_In.class_;
+            };
+            timestamp = null;
+        });
+        let price_decimal : Nat = Nat32.toNat(current_rate.metadata.decimals);
+
+        let equivalent = position.amount_in * Nat64.toNat(current_rate.rate) / 10 ** price_decimal;
+
+        let quote_value = _percent(equivalent, Nat64.toNat(quote.offer));
+        let current_time = Time.now();
+        let fee = calculateMarginFee(current_time, position.timestamp, Nat64.toNat(position.debt), Nat64.toNat(position.marginFee));
+
+        let provided_Liquidity = await sendIn(position.asset_out.id, quote_value, quote.liq_provider_id, null);
+        let amount_sent_out = await sendOut(position.asset_In.id, position.amount_in, Principal.fromActor(main), null, quote.liq_provider_id, null);
+
+        let total_debt = (Nat64.toNat(position.debt) + fee);
+        var diff : Int = provided_Liquidity - total_debt;
+        var pnl = 0;
+
+        if (diff > 0) {
+            pnl := Int.abs(diff);
+            ignore {
+                //send pnl to trader
+                await sendOut(position.asset_out.id, total_debt, Principal.fromActor(main), null, position.owner, null);
+            };
+        };
+
+        let tx1 = await sendOut(position.asset_out.id, total_debt, Principal.fromActor(main), null, position.debt_pool, null);
+
+        await main.removePosition(params.quote_asset.id, position, position.owner, params.position_id);
+        await main.removeQuote(position.asset_In.id, params.quote_id);
+    };
+
 };

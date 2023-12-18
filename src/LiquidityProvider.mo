@@ -3,16 +3,21 @@ import ICRC "Interface/ICRC";
 import Principal "mo:base/Principal";
 
 actor class LiquidityProvider(_admin : Principal, _clearingHouse : Principal) {
+
+    type Token = ICRC.Token;
     stable let admin = _admin;
     stable let clearingHouse = _clearingHouse;
 
     func isAllowed(caller : Principal) : Bool {
         return (caller == admin or caller == clearingHouse);
     };
+    public shared ({ caller }) func approveLiquidity(_tokenPrincipal : Principal, amount : Nat) : async () {
+        let token : Token = actor (Principal.toText(_tokenPrincipal));
 
+    };
     public shared ({ caller }) func sendOutICRC(tokenPrincipal : Principal, to : Principal, amount : Nat) : async Nat {
         assert (isAllowed(caller));
-        let token : ICRC.ICRC = actor (Principal.toText(tokenPrincipal));
+        let token : Token = actor (Principal.toText(tokenPrincipal));
         let fee = await token.icrc1_fee();
         let sending_amount : Nat = amount - fee;
         let tx = await token.icrc1_transfer({
