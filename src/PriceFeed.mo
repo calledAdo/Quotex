@@ -17,8 +17,8 @@ import Nat "mo:base/Nat";
 import XRC "Interface/XRC";
 
 actor class PriceFeed(xrc : Principal) = {
-
-    public type GetExchangeRateResult = XRC.GetExchangeRateResult;
+    type ExchangeRate = XRC.ExchangeRate;
+    type GetExchangeRateResult = XRC.GetExchangeRateResult;
 
     type Factors = {
         deviation : Nat64;
@@ -47,6 +47,8 @@ actor class PriceFeed(xrc : Principal) = {
 
     private func getRate(args : XRC.GetExchangeRateRequest) : async GetExchangeRateResult {
         let xrc_canister : XRC.XRC = actor (Principal.toText(xrc));
+
+        //sends cycles together with the call;
         Cycles.add(10_000_000_000);
         return await xrc_canister.get_exchange_rate(args);
     };
@@ -69,22 +71,30 @@ actor class PriceFeed(xrc : Principal) = {
         return (_percent_decrease >= _newRate or percent_increase <= _newRate);
     };*/
 
-    private func getNewFactors(_oldRate : Nat64, _newRate : Nat64) : () {
-
-    };
-
     public shared ({ caller }) func get_exchange_rate(args : XRC.GetExchangeRateRequest) : async XRC.ExchangeRate {
         assert (isAllowed(caller));
 
-        let previous_rate = switch (LAST_TRADED_RATE.get(args.base_asset.symbol)) {
-            case (? #Ok(res)) { res };
-            case (_) { throw Error.reject("") };
-        };
-
+        //if heartbeat duration is not elapsed return last ExchangeRate to prevent inefficient use of cycles
         if (isElapsed(args.base_asset.symbol) == false) {
+
+            //gets the previous exchange rate,if previous rate does not exist like in the case of the first call to this
+            //canister ,it should get the new rate
+
+            let previous_rate : ExchangeRate = switch (LAST_TRADED_RATE.get(args.base_asset.symbol)) {
+                case (? #Ok(res)) { res };
+                case (_) {
+                    switch (await getRate(args)) {
+                        case (#Ok(res)) { res };
+                        case (#Err(err)) {
+                            throw Error.reject("failed to get exchange rate");
+                        };
+                    };
+                };
+            };
             return previous_rate;
         };
 
+        //gets the last factor ,on first instant it creates a heartbeat of 3600 sec (1 hour) and a deviation of 0.5%
         let last_factor : Factors = switch (ASSET_FACTORS.get(args.base_asset.symbol)) {
             case (?res) { res };
             case (null) {
@@ -95,7 +105,9 @@ actor class PriceFeed(xrc : Principal) = {
                 };
             };
         };
-        let new_rate = switch (await getRate(args)) {
+
+        //gets the new rate if heartbeat duration since last call has elapsed
+        let new_rate : ExchangeRate = switch (await getRate(args)) {
             case (#Ok(res)) { res };
             case (#Err(err)) { throw Error.reject("") };
         };

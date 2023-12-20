@@ -43,19 +43,6 @@ actor class Pool(admin : Principal, clearingHouse : Principal) {
         tokendetails.put(tokenPrincipal, status);
     };
 
-    public shared ({ caller }) func sendOutDIP20(tokenPrincipal : Principal, to : Principal, amount : Nat) : async Nat {
-        assert (isAllowed(caller));
-        let token : DIP20.DIP20 = actor (Principal.toText(tokenPrincipal));
-        let fee = await token.getTokenFee();
-        let tx = await token.transfer(to, amount - fee);
-        let isValid = switch (tx) {
-            case (#Ok(num)) { true };
-            case (#Err(err)) { false };
-        };
-        assert (isValid);
-        return amount -fee;
-    };
-
     public shared ({ caller }) func sendOutICRC(tokenPrincipal : Principal, to : Principal, amount : Nat) : async Nat {
         assert (isAllowed(caller));
         let token : Token = actor (Principal.toText(tokenPrincipal));

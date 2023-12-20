@@ -6,10 +6,10 @@ import Principal "mo:base/Principal";
 import Time "mo:base/Time";
 import Int "mo:base/Int";
 import ICRC "Interface/ICRC";
+
 import Main "main";
 import Types "Types";
 import Pool "Pool";
-
 import PriceFeed "PriceFeed";
 import XRC "Interface/XRC";
 
@@ -27,6 +27,7 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
     type Pool = Pool.Pool;
 
     type OpenPositionParams = Types.OpenPositionParams;
+
     type ClosePositionParams = Types.ClosePositionParams;
 
     type Position = Types.Position;
@@ -41,6 +42,12 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         return (x * y) / Nat64.toNat(percentage_basis);
     };
 
+    /*calculates the margin fee given the start time ,the current time ,the amount and the fee in percent
+
+      ``margin fees are paid for every hour spent on the trade
+
+      ``marginfees will be paid even if trade duration is not up to an hour
+      */
     private func calculateMarginFee(starttime : Int, current_time : Int, amount : Nat, fee : Nat) : Nat {
         let duration : Int = current_time - starttime;
         let interval : Int = switch (duration / 3600 >= 1) {
@@ -75,7 +82,7 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         });
         let result = switch (tx) {
             case (#Ok(num)) { return num };
-            case (#Err(err)) { throw Error.reject("") };
+            case (#Err(err)) { throw Error.reject("Token send out failed") };
         };
     };
 
@@ -94,23 +101,34 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         });
         let result = switch (tx) {
             case (#Ok(num)) { return num };
-            case (#Err(err)) { throw Error.reject("") };
+            case (#Err(err)) { throw Error.reject("Token send in Failed") };
         };
 
     };
 
+    /* takes position paramters and checks if all conditions are satisfied
+
+  `` Returns true if tthey are satisfied or false for any error
+  */
     private func isOpenPositionValid(params : OpenPositionParams) : async {
         valid : Bool;
-        token_details : TokenDetails;
+        margin_fee : Nat64;
     } {
         let quote = await main.getQuote(params.base_asset.id, params.quote_id);
         let pool_principal = await main.getPool(params.pool_id);
         let pool : Pool.Pool = actor (Principal.toText(pool_principal));
-        let tokenDetails = await pool.getTokenDetails(params.base_asset.id);
+
+        //gets the token details associated with that token in the pool provifding the leverage
+        let token_details = await pool.getTokenDetails(params.base_asset.id);
 
         return {
-            valid = tokenDetails.is_allowed and params.debt <= tokenDetails.max_debt and params.collateral_amount >= tokenDetails.min_collateral and inRange(Nat64.toNat(params.debt), Nat64.toNat(quote.range.min), Nat64.toNat(quote.range.max));
-            token_details = tokenDetails;
+            valid = token_details.is_allowed // checks if token is an allowed asset by the pool providing levarage
+
+            //checks that maximum debt for trading that token is not exceed
+            and params.debt <= token_details.max_debt and params.collateral_amount >= token_details.min_collateral and inRange(Nat64.toNat(params.debt), Nat64.toNat(quote.range.min), Nat64.toNat(quote.range.max));
+
+            // returns margin fee
+            margin_fee = token_details.margin_fee;
         };
 
     };
@@ -174,7 +192,7 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
             asset_out = quote.quote_asset;
             debt = params.debt;
             debt_pool = debt_pool;
-            marginFee = res.token_details.margin_fee;
+            marginFee = res.margin_fee;
             timestamp = Time.now();
             owner = caller;
         };
@@ -212,11 +230,13 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         let provided_Liquidity = await sendIn(position.asset_out.id, quote_value, quote.liq_provider_id, null);
         let amount_sent_out = await sendOut(position.asset_In.id, position.amount_in, Principal.fromActor(main), null, quote.liq_provider_id, null);
 
-        let total_debt = (Nat64.toNat(position.debt) + fee);
+        //special case of bad debt
+        var total_debt = provided_Liquidity;
         var diff : Int = provided_Liquidity - total_debt;
         var pnl = 0;
 
         if (diff > 0) {
+            total_debt := Nat64.toNat(position.debt) + fee;
             pnl := Int.abs(diff);
             ignore {
                 //send pnl to trader

@@ -42,28 +42,37 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
         return caller == clearingHouse or caller == admin;
     };
 
+    public query func getClearingHousePrincipal() : async Principal {
+        return clearingHouse;
+    };
+
+    public query func getPriceFeed() : async Principal {
+        return priceFeed;
+    };
+
     public query func getAsset(id : Nat) : async Asset {
         return assetsList.get(id);
     };
+
     public query func getQuote(_token : Principal, id : Nat) : async Quote {
-        let _tokenQuotes = switch (token_QUOTES.get(_token)) {
+        let token_quotes = switch (token_QUOTES.get(_token)) {
             case (?res) { res };
             case (_) { throw Error.reject("") };
         };
-        return _tokenQuotes.get(id);
+        return token_quotes.get(id);
     };
 
     public query func getPool(id : Nat) : async Principal {
         return pools.get(id);
     };
 
-    private func _getPositionID(_token : Principal, _position : Position, positonBuffer : PositionBuffer) : {
+    private func _getPositionID(_token : Principal, _position : Position, positionBuffer : PositionBuffer) : {
         #Ok : Nat;
         #Err : Text;
     } {
-        let total_positions = switch (positonBuffer.get(_token)) {
+        let total_positions = switch (positionBuffer.get(_token)) {
             case (?res)(res);
-            case (_) { return #Err("not found") };
+            case (_) { return #Err("Token Positions not found") };
         };
         var counter = 0;
         label looping for (position in total_positions.vals()) {
@@ -76,73 +85,11 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
 
     };
 
-    public query func getPositionID(_token : Principal, _position : Position) : async Nat {
-        let position_id = switch (_getPositionID(_token, _position, token_POSITIONS)) {
-            case (#Ok(res)) { res };
-            case (#Err(err)) { throw Error.reject("") };
-        };
-    };
+    /*
+    Stores a position for a token
+       each position is associated with both a user and a token which is the base_asset of the trade
 
-    private func _getPositionByID(_token : Principal, _positionID : Nat) : {
-        #Ok : Position;
-        #Err : Text;
-    } {
-        let token_positions = switch (token_POSITIONS.get(_token)) {
-            case (?res) { res };
-            case (_) { return #Err("Not found") };
-        };
-        return return #Ok(token_positions.get(_positionID));
-    };
-
-    public func getPositionByID(_token : Principal, _positionID : Nat) : async Position {
-        let res = switch (_getPositionByID(_token, _positionID)) {
-            case (#Ok(res)) { res };
-            case (#Err(red))(throw Error.reject(""));
-        };
-        return res;
-    };
-    public query func getClearingHousePrincipal() : async Principal {
-        return clearingHouse;
-    };
-
-    public query func getPriceFeed() : async Principal {
-        return priceFeed;
-    };
-    // createPool function can only be called by admin to restrict bad actord from wasting cycles and ensure on
-    //intereted personnels participate
-    public shared ({ caller }) func createPool(_admin : Principal) : async Nat {
-        assert (isAllowed(caller));
-        let newPool : Pool = await Pool.Pool(_admin, clearingHouse);
-        pools.add(Principal.fromActor(newPool));
-        return pools.size() + 1;
-    };
-
-    public shared ({ caller }) func setQuote(_token : Principal, _providerID : Nat, _quote : Quote) : async Nat {
-        let providerPrincipal : Principal = _quote.liq_provider_id;
-        let liq_Provider : LiquidityProvider = actor (Principal.toText(providerPrincipal));
-
-        assert (caller == (await liq_Provider.getAdmin()));
-        let _tokenQuotes = switch (token_QUOTES.get(_token)) {
-            case (?res) { res };
-            case (_) { throw Error.reject("") };
-        };
-        _tokenQuotes.add(_quote);
-        return _tokenQuotes.size() - 1;
-
-    };
-
-    public shared ({ caller }) func removeQuote(_token : Principal, _quoteID : Nat) : async () {
-        let _tokenQuotes = switch (token_QUOTES.get(_token)) {
-            case (?res) { res };
-            case (_) { throw Error.reject("") };
-        };
-        let _quote : Quote = _tokenQuotes.get(_quoteID);
-        let providerPrincipal : Principal = _quote.liq_provider_id;
-        let provider : LiquidityProvider = actor (Principal.toText(providerPrincipal));
-        assert (caller == (await provider.getAdmin()) or isAllowed(caller));
-        let removedQuote : Quote = _tokenQuotes.remove(_quoteID);
-    };
-
+  */
     private func _storePosition(_token : Principal, _position : Position, _user : Principal) : async () {
         let total_pos : Buffer.Buffer<Position> = switch (token_POSITIONS.get(_token)) {
             case (?res) { res };
@@ -155,11 +102,20 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
         };
         total_pos.add(_position);
         user_positions.add(_position);
-        token_POSITIONS.put(_token, (total_pos));
+        token_POSITIONS.put(_token, total_pos);
         user_POSITIONS.put(_user, user_positions);
     };
 
+    /*
+      Removes a position from the buffer list associated with the base_asset and the user positions buffer
+
+
+      function can only be called by clearingHouse or allowed principals
+
+
+    */
     private func _removePosition(_token : Principal, _position : Position, _user : Principal, _positonID : Nat) : async () {
+
         let total_positions = switch (token_POSITIONS.get(_token)) {
             case (?res) { res };
             case (_) { throw Error.reject("") };
@@ -181,6 +137,99 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
         token_POSITIONS.put(_token, total_positions);
         user_POSITIONS.put(_user, user_positions);
 
+    };
+
+    public query func getPositionID(_token : Principal, _position : Position) : async Nat {
+        let position_id = switch (_getPositionID(_token, _position, token_POSITIONS)) {
+            case (#Ok(res)) { res };
+            case (#Err(err)) { throw Error.reject(err) };
+        };
+    };
+
+    private func _getPositionByID(_token : Principal, _positionID : Nat) : {
+        #Ok : Position;
+        #Err : Text;
+    } {
+        let token_positions = switch (token_POSITIONS.get(_token)) {
+            case (?res) { res };
+            case (_) { return #Err("Position not found") };
+        };
+        return #Ok(token_positions.get(_positionID));
+    };
+
+    public func getPositionByID(_token : Principal, _positionID : Nat) : async Position {
+        let res = switch (_getPositionByID(_token, _positionID)) {
+            case (#Ok(res)) { res };
+            case (#Err(err))(throw Error.reject(err));
+        };
+        return res;
+    };
+
+    // createPool function can only be called by admin to restrict bad actord from wasting cycles and ensure on
+    //intereted personnels participate
+    public shared ({ caller }) func createPool(_admin : Principal) : async Nat {
+        assert (isAllowed(caller));
+        let newPool : Pool = await Pool.Pool(_admin, clearingHouse);
+        pools.add(Principal.fromActor(newPool));
+        return pools.size() + 1;
+    };
+
+    /*
+      sets a Quote for a particular which in this case is the base_asset
+
+
+        public type Quote = {
+        offer : Nat64;   ~ the premium in percentage that you would have the quote taker i.e trader has to pay
+        quote_asset : Asset;  ~ The asset the provider is willing to give for the base asset
+        range : Range;        ~A range of the amount of quote_asset allowed for this quote
+        time_limit : Int;      ~ A time limit to ensure protect liquidity providers from future use of this quote
+        liq_provider_id : Principal;  ~ the canister id or principal the created that quote
+
+    };
+
+    */
+
+    public shared ({ caller }) func setQuote(_token : Principal, _providerID : Nat, quote : Quote) : async Nat {
+        let providerPrincipal : Principal = quote.liq_provider_id;
+        let liq_Provider : LiquidityProvider = actor (Principal.toText(providerPrincipal));
+
+        // Asserts caller is either liquidity provider pool admin
+        assert (caller == (await liq_Provider.getAdmin()));
+        let token_quotes = switch (token_QUOTES.get(_token)) {
+            case (?res) { res };
+            case (_) { throw Error.reject("Token Not Foumd") }; //prevents creation of quotes fro unknown tokens
+        };
+        token_quotes.add(quote);
+        return token_quotes.size() - 1;
+
+    };
+
+    /* Removes a quote given its id
+
+   `` can only be called by clearingHouse canister of the principal identity that set the Quote
+
+   */
+    public shared ({ caller }) func removeQuote(_token : Principal, _quoteID : Nat) : async () {
+        let token_quotes = switch (token_QUOTES.get(_token)) {
+            case (?res) { res };
+            case (_) { throw Error.reject("Token Quotes not found") };
+        };
+
+        //gets th quote
+        let quote : Quote = token_quotes.get(_quoteID);
+
+        let providerPrincipal : Principal = quote.liq_provider_id;
+        let provider : LiquidityProvider = actor (Principal.toText(providerPrincipal));
+
+        /* checks that the principal assigned as admin of that liquidity provider canister is the one calling the function
+          This can also be called by the admin principal id of this canister for quotes that
+
+          `Have become too old
+          `Tokens that have been removed
+
+           */
+        assert (caller == (await provider.getAdmin()) or isAllowed(caller));
+        ignore (token_quotes.remove(_quoteID));
     };
 
     public shared ({ caller }) func storePosition(_token : Principal, _position : Position, _user : Principal) : async () {
