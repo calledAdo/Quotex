@@ -16,7 +16,7 @@ import Nat8 "mo:base/Nat8";
 import Nat "mo:base/Nat";
 import XRC "Interface/XRC";
 
-actor class PriceFeed(xrc : Principal) = {
+shared ({ caller }) actor class PriceFeed(xrc : Principal) = {
     type ExchangeRate = XRC.ExchangeRate;
     type GetExchangeRateResult = XRC.GetExchangeRateResult;
 
@@ -25,7 +25,7 @@ actor class PriceFeed(xrc : Principal) = {
         heartbeat : Int;
         last_updated_time : Time.Time;
     };
-
+    let admin : Principal = caller;
     //This is implemented to restrict use of this canister so only allowed canisters can utilise it
     let approved = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
 
@@ -44,6 +44,7 @@ actor class PriceFeed(xrc : Principal) = {
             case (?res) { res };
             case (_) { false };
         };
+        return (allowed or user == admin);
     };
 
     private func getRate(args : XRC.GetExchangeRateRequest) : async GetExchangeRateResult {
@@ -116,5 +117,10 @@ actor class PriceFeed(xrc : Principal) = {
         ASSET_FACTORS.put(args.base_asset.symbol, { deviation = last_factor.deviation; heartbeat = last_factor.heartbeat; last_updated_time = Time.now() });
         LAST_TRADED_RATE.put(args.base_asset.symbol, #Ok(new_rate));
         return new_rate;
+    };
+
+    public shared ({ caller }) func setApproval(id : Principal, status : Bool) : async () {
+        assert (caller == admin);
+        approved.put(id, status);
     };
 };

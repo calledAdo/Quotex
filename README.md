@@ -53,7 +53,7 @@ Quotex utilises this model to ensure capital eficient trades with zero slippage 
   ```bash
        #deploy the clearingHouse canister
 
-    dfx dpeloy --network ic ClearingHouse --argument "(principal \"${mainID}\",principal \"${priceFeedID}\")" ;
+    dfx deploy --network ic ClearingHouse --argument "(principal \"${mainID}\",principal \"${priceFeedID}\")" ;
 
     export clearingHouseID=$(dfx canister id --network ic ClearingHouse) 
 
@@ -63,4 +63,8 @@ Quotex utilises this model to ensure capital eficient trades with zero slippage 
   ```bash
       dfx deploy --network ic Main --argument "(principal \"${clearingHouseID}\",principal \"${priceFeedID}\")"
   ```
+
+  [Main](https://a4gq6-oaaaa-aaaab-qaa4q-cai.raw.icp0.io/?id=tjmnu-6aaaa-aaaal-adjha-cai)<br>
+  [PriceFeed](https://a4gq6-oaaaa-aaaab-qaa4q-cai.raw.icp0.io/?id=tonla-tyaaa-aaaal-adjhq-cai)<br>
+  [ClearingHouse](https://a4gq6-oaaaa-aaaab-qaa4q-cai.raw.icp0.io/?id=rtqfi-aqaaa-aaaal-adjia-cai)
 
