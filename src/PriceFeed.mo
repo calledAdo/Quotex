@@ -26,6 +26,7 @@ actor class PriceFeed(xrc : Principal) = {
         last_updated_time : Time.Time;
     };
 
+    //This is implemented to restrict use of this canister so only allowed canisters can utilise it
     let approved = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
 
     let LAST_TRADED_RATE = HashMap.HashMap<Text, GetExchangeRateResult>(1, Text.equal, Text.hash);
@@ -52,6 +53,7 @@ actor class PriceFeed(xrc : Principal) = {
         Cycles.add(10_000_000_000);
         return await xrc_canister.get_exchange_rate(args);
     };
+
     //checks if token's price should be fetched based on if the heartbeat duration has passed since the last call
     private func isElapsed(tokenSymbol : Text) : Bool {
         let current_time = Time.now();
@@ -99,8 +101,8 @@ actor class PriceFeed(xrc : Principal) = {
             case (?res) { res };
             case (null) {
                 {
-                    deviation = 50_000;
-                    heartbeat = 3600;
+                    deviation = 50_000; //0.5% hardcoded, but can be made more dynamic
+                    heartbeat = 3600; //1 hour
                     last_updated_time = Time.now();
                 };
             };

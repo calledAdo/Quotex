@@ -1,12 +1,30 @@
+/*
+  The Main Canister Interface that stores
+
+  Assets
+  Positions
+  Quotes
+  Pools canisterID
+  liquidity ProviderID
+
+  Note:Some functions in here are restricted to the admins or clearingHouse canister like
+
+  Adding new Debt Pools
+  ading positions
+  removing Positions
+
+
+*/
+
 import Principal "mo:base/Principal";
 import HashMap "mo:base/HashMap";
-import Hash "mo:base/Hash";
 import Text "mo:base/Text";
 import Nat "mo:base/Nat";
 import Error "mo:base/Error";
 import Buffer "mo:base/Buffer";
 import Int "mo:base/Int";
-import Iter "mo:base/Iter";
+
+import ICRC "Interface/ICRC";
 import Pool "Pool";
 import LiquidityProvider "LiquidityProvider";
 import Types "Types";
@@ -15,7 +33,7 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
 
     type LiquidityProvider = LiquidityProvider.LiquidityProvider;
     type Pool = Pool.Pool;
-
+    type Token = ICRC.Token;
     type Asset = Types.Asset;
 
     type Quote = Types.Quote;
@@ -56,16 +74,16 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
 
     public query func getQuote(_token : Principal, id : Nat) : async Quote {
         let token_quotes = switch (token_QUOTES.get(_token)) {
-            case (?res) { res };
+            case (?res) { return res.get(id) };
             case (_) { throw Error.reject("") };
         };
-        return token_quotes.get(id);
     };
 
     public query func getPool(id : Nat) : async Principal {
         return pools.get(id);
     };
 
+    //gets a position by looping through all the values in a Position type Buffer
     private func _getPositionID(_token : Principal, _position : Position, positionBuffer : PositionBuffer) : {
         #Ok : Nat;
         #Err : Text;
@@ -118,17 +136,19 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
 
         let total_positions = switch (token_POSITIONS.get(_token)) {
             case (?res) { res };
-            case (_) { throw Error.reject("") };
+            case (_) { throw Error.reject("Token Positions not found") };
         };
 
         let user_positions = switch (user_POSITIONS.get(_user)) {
             case (?res) { res };
-            case (_) { throw Error.reject("") };
+            case (_) { throw Error.reject("User position not found") };
         };
 
         let user_position_id = switch (_getPositionID(_token, _position, user_POSITIONS)) {
             case (#Ok(res)) { res };
-            case (#Err(err)) { throw Error.reject("") };
+            case (#Err(err)) {
+                throw Error.reject("No user position with such id");
+            };
         };
         ignore {
             let removedPosition = total_positions.remove(_positonID);
@@ -158,19 +178,18 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
     };
 
     public func getPositionByID(_token : Principal, _positionID : Nat) : async Position {
-        let res = switch (_getPositionByID(_token, _positionID)) {
-            case (#Ok(res)) { res };
+        switch (_getPositionByID(_token, _positionID)) {
+            case (#Ok(res)) { return res };
             case (#Err(err))(throw Error.reject(err));
         };
-        return res;
+
     };
 
-    // createPool function can only be called by admin to restrict bad actord from wasting cycles and ensure on
-    //intereted personnels participate
-    public shared ({ caller }) func createPool(_admin : Principal) : async Nat {
+    // createPool function can only be called by admin to restrict bad actord from wasting cycles and ensure only
+    //interested personnels participate
+    public shared ({ caller }) func createPool(poolPrincipal : Principal) : async Nat {
         assert (isAllowed(caller));
-        let newPool : Pool = await Pool.Pool(_admin, clearingHouse);
-        pools.add(Principal.fromActor(newPool));
+        pools.add(poolPrincipal);
         return pools.size() + 1;
     };
 
@@ -232,10 +251,40 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
         ignore (token_quotes.remove(_quoteID));
     };
 
+    //stores a position
     public shared ({ caller }) func storePosition(_token : Principal, _position : Position, _user : Principal) : async () {
+        assert (isAllowed(caller));
         return await _storePosition(_token, _position, _user);
     };
+
+    //removes a position from storage
     public shared ({ caller }) func removePosition(_token : Principal, _position : Position, _user : Principal, _positionID : Nat) : async () {
+        assert (isAllowed(caller));
         return await _removePosition(_token, _position, _user, _positionID);
+    };
+
+    //Approves the clearingHouse to spend the entire balance of this actor ;
+    //function can onnly be called by admin
+    //
+    public shared ({ caller }) func approve(tokenPrincipal : Principal) : async () {
+        assert (isAllowed(caller));
+        let token : Token = actor (Principal.toText(tokenPrincipal));
+        let balance = await token.icrc1_balance_of({
+            owner = Principal.fromActor(this);
+            subaccount = null;
+        });
+        let fee = await token.icrc1_fee();
+        ignore {
+            await token.icrc2_approve({
+                from_subaccount = null;
+                spender = { owner = clearingHouse; subaccount = null };
+                amount = balance;
+                expires_at = null;
+                expected_allowance = ?balance;
+                memo = null;
+                fee = ?fee;
+                created_at_time = null;
+            });
+        };
     };
 };

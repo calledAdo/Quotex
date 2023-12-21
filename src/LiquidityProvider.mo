@@ -8,14 +8,33 @@ actor class LiquidityProvider(_admin : Principal, _clearingHouse : Principal) {
     stable let admin = _admin;
     stable let clearingHouse = _clearingHouse;
 
+    //checks if caller is admin or clearingHouse Canister
     func isAllowed(caller : Principal) : Bool {
         return (caller == admin or caller == clearingHouse);
     };
+
+    //Approves liquidity for clearingHouse to spend
     public shared ({ caller }) func approveLiquidity(_tokenPrincipal : Principal, amount : Nat) : async () {
         let token : Token = actor (Principal.toText(_tokenPrincipal));
+        let fee = await token.icrc1_fee();
+        ignore {
+            await token.icrc2_approve({
+                from_subaccount = null;
+                spender = { owner = clearingHouse; subaccount = null };
+                amount = amount;
+                expires_at = null;
+                expected_allowance = ?amount;
+                memo = null;
+                fee = ?fee;
+                created_at_time = null;
+            });
+        };
 
     };
-    public shared ({ caller }) func sendOutICRC(tokenPrincipal : Principal, to : Principal, amount : Nat) : async Nat {
+
+    //Sends out token
+    //function can only be called by allowed Principals
+    public shared ({ caller }) func sendOut(tokenPrincipal : Principal, to : Principal, amount : Nat) : async Nat {
         assert (isAllowed(caller));
         let token : Token = actor (Principal.toText(tokenPrincipal));
         let fee = await token.icrc1_fee();
