@@ -24,5 +24,43 @@ Quotex utilises this model to ensure capital eficient trades with zero slippage 
   The R.F.O model provides the convenience,capital efficeincy and price discovery offered by a traditional Centralised Exchange OrderBook and  also the inherent transparency and decentralization offered by a Decentralised Exchange.
 
 * ### Efficient Price data Availabilty <br>
-  Quotex uses a Price Feed Canister  that utilises the [XRC](https://internetcomputer.org/docs/current/developer-docs/integrations/exchange-rate/exchange-rate-canister) built by DFINITY which uses HTTP outcalls to get accurate and timely price data for settling trades,thereby greatly improving trade excution speed . 
- 
+  Quotex uses a Price Feed Canister  that utilises the [XRC](https://internetcomputer.org/docs/current/developer-docs/integrations/exchange-rate/exchange-rate-canister) built by DFINITY which uses HTTP outcalls to get accurate and timely price data for settling trades,thereby greatly improving trade excution speed . <br>
+
+
+  ### To deploy canisters <br>
+  ```bash
+     #start your local replica
+   
+   dfx start --background
+
+     #create an empty canister for Main and get the canisterID
+    dfx canister create --network ic Main
+   
+    export mainID=$(dfx canister id --network ic Main)
+
+  
+  ```
+     deploy priceFeed and gets its canister id 
+     ```bash
+
+    dfx deploy --network ic PriceFeed --argument "(principal \"uf6dk-hyaaa-aaaaq-qaaaq-cai\")"
+    
+    export priceFeedID=$(dfx canister id --network ic PriceFeed)
+     
+     ```
+
+     deploy the ClearingHouse canister and get its id
+  ```bash
+       #deploy the clearingHouse canister
+
+    dfx dpeloy --network ic ClearingHouse --argument "(principal \"${mainID}\",principal \"${priceFeedID}\")" ;
+
+    export clearingHouseID=$(dfx canister id --network ic ClearingHouse) 
+
+  ``` 
+
+    finally deploy the code of the main canister on the network 
+  ```bash
+      dfx deploy --network ic Main --argument "(principal \"${clearingHouseID}\",principal \"${priceFeedID}\")"
+  ```
+

@@ -29,7 +29,7 @@ import Pool "Pool";
 import LiquidityProvider "LiquidityProvider";
 import Types "Types";
 
-actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Principal) = this {
+shared ({ caller }) actor class Main(_clearingHouse : Principal, _priceFeed : Principal) = this {
 
     type LiquidityProvider = LiquidityProvider.LiquidityProvider;
     type Pool = Pool.Pool;
@@ -55,7 +55,7 @@ actor class Main(_clearingHouse : Principal, admin : Principal, _priceFeed : Pri
 
     stable let clearingHouse : Principal = _clearingHouse;
     stable let priceFeed : Principal = _priceFeed;
-
+    stable let admin : Principal = caller;
     private func isAllowed(caller : Principal) : Bool {
         return caller == clearingHouse or caller == admin;
     };

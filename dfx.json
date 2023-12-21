@@ -1,11 +1,15 @@
 {
   "canisters": {
-    "Quotex_backend": {
+    "Main": {
       "main": "src/main.mo",
       "type": "motoko"
     },
     "PriceFeed": {
       "main": "src/PriceFeed.mo",
+      "type": "motoko"
+    },
+    "ClearingHouse": {
+      "main": "src/ClearingHouse.mo",
       "type": "motoko"
     }
   },
