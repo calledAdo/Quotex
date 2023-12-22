@@ -5,13 +5,14 @@ import Nat64 "mo:base/Nat64";
 import Principal "mo:base/Principal";
 import Time "mo:base/Time";
 import Int "mo:base/Int";
+
 import ICRC "Interface/ICRC";
+import XRC "Interface/XRC";
 
 import Main "main";
 import Types "Types";
 import Pool "Pool";
 import PriceFeed "PriceFeed";
-import XRC "Interface/XRC";
 
 actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
     type ExchangeRate = XRC.ExchangeRate;
