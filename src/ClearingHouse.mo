@@ -63,6 +63,10 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         return fee;
     };
 
+    /*
+      used for checking if x falls in the range of min to max included
+      liquidity providers set range in the amount of the asset they are willing to receive such that they can not exceed certain amount
+    */
     private func inRange(x : Nat, min : Nat, max : Nat) : Bool {
         return (x <= max and x >= min);
     };
@@ -142,10 +146,7 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         return (inRange(position.amount_in, Nat64.toNat(quote.range.min), Nat64.toNat(quote.range.max)) and allowed and quote.quote_asset.id == position.asset_out.id);
     };
 
-    private func openPosition(caller : Principal, params : OpenPositionParams, subaccount : ?Blob) : async () {
-        //asserts all parameters are valid  check isOpenPositionValid to see full ilplemetation
-        let res = await isOpenPositionValid(params);
-        assert (res.valid == true);
+    private func _openPosition(caller : Principal, params : OpenPositionParams, subaccount : ?Blob, marginFee : Nat64) : async () {
 
         let pool_principal : Principal = await main.getPool(params.pool_id);
 
@@ -173,7 +174,8 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         //the value of quote
         let quote_value : Nat = _percent(Nat64.toNat(exchange_value), Nat64.toNat(quote.offer));
 
-        let debt_pool = await main.getPool(params.pool_id);
+        //get the canister id of the debt_pool
+        let debt_pool : Principal = await main.getPool(params.pool_id);
 
         // token transactions
 
@@ -192,7 +194,7 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
             asset_out = quote.quote_asset;
             debt = params.debt;
             debt_pool = debt_pool;
-            marginFee = res.margin_fee;
+            marginFee = marginFee;
             timestamp = Time.now();
             owner = caller;
         };
@@ -203,10 +205,9 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
         await main.removeQuote(params.base_asset.id, params.quote_id);
     };
 
-    private func closePosition(caller : Principal, params : ClosePositionParams) : async () {
+    private func _closePosition(caller : Principal, params : ClosePositionParams) : async () {
         let position : Position = await main.getPositionByID(params.quote_asset.id, params.position_id);
         let quote : Quote = await main.getQuote(position.asset_In.id, params.quote_id);
-        assert (await isClosePositionValid(caller, params));
 
         let current_rate : ExchangeRate = await priceFeed.get_exchange_rate({
             base_asset = {
@@ -248,6 +249,18 @@ actor class ClearingHouse(mainPrincipal : Principal, _priceFeed : Principal) = {
 
         await main.removePosition(params.quote_asset.id, position, position.owner, params.position_id);
         await main.removeQuote(position.asset_In.id, params.quote_id);
+    };
+
+    public shared ({ caller }) func openPosition(params : OpenPositionParams, subaccount : ?Blob) : async () {
+        //asserts all parameters are valid  check isOpenPositionValid to see full ilplemetation
+        let res = await isOpenPositionValid(params);
+        assert (res.valid == true);
+        await _openPosition(caller, params, subaccount, res.margin_fee);
+    };
+
+    public shared ({ caller }) func closePosition(params : ClosePositionParams) : async () {
+        assert (await isClosePositionValid(caller, params));
+        await _closePosition(caller, params);
     };
 
 };
