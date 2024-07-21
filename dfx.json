@@ -1,0 +1,26 @@
+{
+  "canisters": {
+    "Quotex_backend": {
+      "main": "src/Quotex_backend/main.mo",
+      "type": "motoko"
+    },
+    "Quotex_frontend": {
+      "dependencies": [
+        "Quotex_backend"
+      ],
+      "source": [
+        "src/Quotex_frontend/dist"
+      ],
+      "type": "assets",
+      "workspace": "Quotex_frontend"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
