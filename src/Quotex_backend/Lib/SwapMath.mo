@@ -1,30 +1,49 @@
 import Types "../Types/Types";
 import BitMap "BitMap";
 import PriceMath "PriceMath";
-import Nat64 "mo:base/Nat64";
+import C "PureFuncs";
 
 module {
 
-    private func one_percent() : Nat64 {
-        return 1_000;
+    public func exceeded(stopping_tick : Nat, current_tick : Nat, buy : Bool) : Bool {
+        switch (buy) {
+            case (true) {
+                if (current_tick > stopping_tick) { return true } else {
+                    return false;
+                };
+            };
+            case (false) {
+                if (current_tick < stopping_tick) { return true } else {
+                    return false;
+                };
+            };
+        };
     };
 
     public func swap(params : Types.SwapParams) : Types.SwapResult {
 
-        var ticks_details = params.ticks_details;
+        let ticks_details = params.ticks_details;
 
-        //
-        var current_state_tick = params.init_tick;
+        var current_tick = params.init_tick;
 
         var amount_out = 0;
         var amount_remaining = params.amount_in;
 
-        label swaploop while (current_state_tick < params.max_tick) {
+        label swaploop while (not exceeded(params.stopping_tick, current_tick, params.to_buy)) {
+
+            // create  new swap parameters  for every new iteration of the loop
+            let new_params = {
+                to_buy = params.to_buy;
+                amount_in = amount_remaining;
+                init_tick = current_tick;
+                stopping_tick = params.stopping_tick;
+                snapshot_price = params.snapshot_price;
+                multiplier_bitmaps = params.multiplier_bitmaps;
+                ticks_details = ticks_details;
+            };
 
             //
-            let swap_result = swap_at_tick(params);
-
-            ticks_details := swap_result.new_ticks_details;
+            let swap_result = swap_at_tick(new_params);
 
             // multiplier_bitmaps := swap_result.new_bitmaps;
 
@@ -39,55 +58,53 @@ module {
             };
 
             //
-            let current_multiplier = current_state_tick / one_percent();
+            let current_multiplier = current_tick / C.HUNDRED_BASIS_POINT();
 
             //multiplier_bitmaps for current multiplier ;
-            let current_bitmap : Nat = switch (params.multiplier_bitmaps.get(Nat64.toNat(current_multiplier))) {
+            let current_bitmap : Nat = switch (params.multiplier_bitmaps.get(current_multiplier)) {
                 case (?res) { res };
                 case (_) {
-                    0; //Recheck logic
+                    0;
                 };
             };
 
-            current_state_tick := BitMap.next_initialized_tick(current_bitmap, current_state_tick, params.to_buy);
+            current_tick := BitMap.next_initialized_tick(current_bitmap, current_tick, params.to_buy);
 
         };
 
         return {
-            current_tick = current_state_tick;
+            current_tick = current_tick;
             amount_out = amount_out;
             amount_remaining = amount_remaining;
-            new_ticks_details = ticks_details;
         };
     };
 
     private func swap_at_tick(params : Types.SwapParams) : Types.SwapAtTickResult {
 
-        let multiplier = params.init_tick / one_percent();
-        let bit_position = (params.init_tick % one_percent()) / 10;
+        let multiplier = params.init_tick / C.HUNDRED_BASIS_POINT();
+        let bit_position = (params.init_tick % C.HUNDRED_BASIS_POINT()) / 10;
 
         //var amount out = set to zero
         var amount_out = 0;
 
-        var amount_remaining = 0;
+        var amount_remaining = params.amount_in;
 
-        var ticks_details = params.ticks_details;
+        let ticks_details = params.ticks_details;
 
         //calculate the current price
         let tick_price = PriceMath.tick_to_price(multiplier, bit_position, params.snapshot_price);
 
-        let current_tick_details = switch (ticks_details.get(Nat64.toNat(params.init_tick))) {
+        let current_tick_details = switch (ticks_details.get(params.init_tick)) {
             case (?res) { res };
             case (_) {
+                // if current ticks details can not be found return default
                 return {
-                    amount_remaining = params.amount_in;
-                    amount_out = 0;
-                    new_ticks_details = ticks_details;
+                    amount_remaining = amount_remaining;
+                    amount_out = amount_out; // 0
                 };
             };
         };
 
-        //Init_tick liquidity = get the amount of liquidity in base token or quote token in the current tick
         let init_tick_liquidity = switch (params.to_buy) {
             case (true) { current_tick_details.liquidity_base };
             case (false) { current_tick_details.liquidity_quote };
@@ -96,13 +113,13 @@ module {
         let init_liquidity_equivalent = PriceMath._equivalent(init_tick_liquidity, tick_price, not params.to_buy);
 
         if (init_liquidity_equivalent <= params.amount_in) {
-            // set amount out += init liquidity
+
             amount_out := init_tick_liquidity;
 
             //set amount_remaining = amount_in - Init liquidity
-            amount_remaining := params.amount_in - init_liquidity_equivalent;
+            amount_remaining -= init_liquidity_equivalent;
 
-            let new_tick = switch (params.to_buy) {
+            let new_tick_details = switch (params.to_buy) {
                 case (true) {
                     {
                         liquidity_base = 0;
@@ -119,12 +136,13 @@ module {
                 };
             };
 
-            ticks_details.put(Nat64.toNat(params.init_tick), new_tick)
+            ticks_details.put(params.init_tick, new_tick_details)
 
         } else {
 
-            // return equivalent
             amount_out := PriceMath._equivalent(params.amount_in, tick_price, params.to_buy);
+
+            amount_remaining := 0;
 
             let new_tick = switch (params.to_buy) {
                 case (true) {
@@ -143,7 +161,7 @@ module {
                 };
             };
             ticks_details.put(
-                Nat64.toNat(params.init_tick),
+                params.init_tick,
                 new_tick,
             );
 
@@ -151,7 +169,6 @@ module {
         return {
             amount_out = amount_out;
             amount_remaining = amount_remaining;
-            new_ticks_details = ticks_details;
         };
 
     };

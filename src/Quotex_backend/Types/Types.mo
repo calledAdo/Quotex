@@ -1,13 +1,26 @@
 import Nat "mo:base/Nat";
 import HashMap "mo:base/HashMap";
-import Nat64 "mo:base/Nat64";
 import Hash "mo:base/Hash";
 import Text "mo:base/Text";
+import Principal "mo:base/Principal";
 module {
 
     public func natHash(x : Nat) : Hash.Hash {
         let text = Nat.toText(x);
         return Text.hash(text);
+    };
+
+    public type MarketDetails = {
+        base_token : Principal;
+        base_token_decimal : Nat;
+        flipping_amount_base : Nat;
+        quote_token : Principal;
+        quote_token_decimal : Nat;
+        flipping_amount_quote : Nat;
+        margin_provider : Principal;
+        interest_rate : Nat;
+        spam_penalty_fee : Nat;
+        max_leverage : Nat;
     };
 
     public type TickDetails = {
@@ -17,46 +30,36 @@ module {
     };
 
     public type OrderDetails = {
-        reference_tick : Nat64;
+        reference_tick : Nat;
         tick_shares : Nat;
     };
 
     public type OpenOrderParams = {
-        reference_tick : Nat64;
-        current_tick : Nat64;
+        reference_tick : Nat;
+        current_tick : Nat;
         amount_in : Nat;
         min_flipping_amount : Nat;
-        snapshot_price : Nat64;
         multiplier_bitmaps : HashMap.HashMap<Nat, Nat>;
         ticks_details : HashMap.HashMap<Nat, TickDetails>;
     };
 
-    public type OpenOrderResult = {
-        order_details : OrderDetails;
-        tick_flipped : Bool;
-        new_multiplier_bitmaps : HashMap.HashMap<Nat, Nat>;
-        new_ticks_details : HashMap.HashMap<Nat, TickDetails>;
-    };
-
-    public type CloseOrderParams = {
+    public type RemoveOrderParams = {
         order_details : OrderDetails;
         multiplier_bitmaps : HashMap.HashMap<Nat, Nat>;
         ticks_details : HashMap.HashMap<Nat, TickDetails>;
     };
 
-    public type CloseOrderResult = {
+    public type RemoveOrderResult = {
         amount_base : Nat;
         amount_quote : Nat;
-        multiplier_bitmaps : HashMap.HashMap<Nat, Nat>;
-        ticks_details : HashMap.HashMap<Nat, TickDetails>;
     };
 
     public type SwapParams = {
         to_buy : Bool;
         amount_in : Nat;
-        init_tick : Nat64;
-        max_tick : Nat64;
-        snapshot_price : Nat64;
+        init_tick : Nat;
+        stopping_tick : Nat;
+        snapshot_price : Nat;
         multiplier_bitmaps : HashMap.HashMap<Nat, Nat>;
         ticks_details : HashMap.HashMap<Nat, TickDetails>;
     };
@@ -64,14 +67,28 @@ module {
     public type SwapAtTickResult = {
         amount_out : Nat;
         amount_remaining : Nat;
-        new_ticks_details : HashMap.HashMap<Nat, TickDetails>;
+
     };
 
     public type SwapResult = {
-        current_tick : Nat64;
+        current_tick : Nat;
         amount_out : Nat;
         amount_remaining : Nat;
-        new_ticks_details : HashMap.HashMap<Nat, TickDetails>;
+    };
+
+    public type PositionDetails = {
+        owner : Principal;
+        isLong : Bool;
+        debt : Nat;
+        order_size : Nat;
+        interest_rate : Nat;
+        time : Int;
+    };
+
+    public type OpenPositionParams = {
+        collateral_token : Principal;
+        collateral : Nat;
+        debt : Nat;
     };
 
 };

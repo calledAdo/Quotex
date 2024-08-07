@@ -1,20 +1,27 @@
-import Nat64 "mo:base/Nat64";
 module {
 
+    let MINIMUM_BASIS_POINT = 10; // correponds to 0.1%
+    // hundred basis point or one percent
+    private func HUNDRED_BASIS_POINT() : Nat {
+        return 1_000;
+    };
+
     public func _equivalent(amount : Nat, price : Nat, buy : Bool) : Nat {
-        let percent = 100_000;
+        let price_decimal = 10 ** 9; // price_decimal 10** 9 ;
         if (buy) {
-            return (amount * percent) / price;
+            // quote in base out
+            return (amount * price_decimal) / price;
         } else {
-            return (amount * price) / percent;
+            // base in quote out
+            return ((amount * price) / price_decimal);
         };
 
     };
 
-    public func tick_to_price(multiplier : Nat64, bit_position : Nat64, snapshot_price : Nat64) : Nat {
-        let one_percent : Nat64 = 1_000;
-        let percentile = (bit_position * one_percent) / 650;
-        let percentage = (multiplier * one_percent) + percentile;
-        return Nat64.toNat((percentage * snapshot_price));
+    public func tick_to_price(multiplier : Nat, bit_position : Nat, snapshot_price : Nat) : Nat {
+        let percentile = ((bit_position * HUNDRED_BASIS_POINT()) / 100);
+        let percentage = ((multiplier * HUNDRED_BASIS_POINT()) + percentile) * MINIMUM_BASIS_POINT;
+        return (percentage * snapshot_price) / (HUNDRED_BASIS_POINT());
     };
+
 };

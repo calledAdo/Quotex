@@ -1,16 +1,16 @@
 {
   "canisters": {
-    "Quotex_backend": {
-      "main": "src/Quotex_backend/main.mo",
+    "Market": {
+      "main": "src/Quotex_backend/OrderBook/main.mo",
+      "type": "motoko"
+    },
+    "test": {
+      "main": "src/Quotex_backend/test.mo",
       "type": "motoko"
     },
     "Quotex_frontend": {
-      "dependencies": [
-        "Quotex_backend"
-      ],
-      "source": [
-        "src/Quotex_frontend/dist"
-      ],
+      "dependencies": ["Market"],
+      "source": ["src/Quotex_frontend/dist"],
       "type": "assets",
       "workspace": "Quotex_frontend"
     }
