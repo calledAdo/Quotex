@@ -2,10 +2,13 @@ import HashMap "mo:base/HashMap";
 import Buffer "mo:base/Buffer";
 import Types "../Types/Types";
 import BitMap "BitMap";
-import SwapMath "SwapMath";
-import C "PureFuncs";
+
+import C "Constants";
+import F "Calculations";
 
 module {
+
+    let TICK_SPACING = C.TICK_SPACING;
 
     type TDS = HashMap.HashMap<Nat, Types.TickDetails>; // Ticks Details
     type MBS = HashMap.HashMap<Nat, Nat>; // Multipliers Bitmpas
@@ -38,10 +41,11 @@ module {
     ///
     ///_placeOrder function
 
-    public func _placeOrder(params : Types.OpenOrderParams) : ?Types.OrderDetails {
+    public func _placeOrder(params : Types.OpenOrderParams, ticks_spacing : Nat) : ?Types.OrderDetails {
 
-        let multiplier = params.reference_tick / C.HUNDRED_BASIS_POINT();
-        let bit_position = (params.reference_tick % C.HUNDRED_BASIS_POINT()) / 10;
+        let reference_tick = params.reference_tick;
+
+        let (multiplier, bit_position) = F.mulAndBit(reference_tick, ticks_spacing);
 
         let ticks_details = params.ticks_details;
 
@@ -62,7 +66,7 @@ module {
         var user_tick_shares = 0;
 
         // above the current tick all liquidity is in base token
-        let new_tick_details = switch (params.reference_tick > params.current_tick) {
+        let new_tick_details = switch (reference_tick > params.current_tick) {
             case (true) {
                 user_tick_shares := calcShares(params.amount_in, ref_tick_details.total_shares, ref_tick_details.liquidity_base);
 
@@ -85,7 +89,7 @@ module {
             };
         };
 
-        ticks_details.put(params.reference_tick, new_tick_details);
+        ticks_details.put(reference_tick, new_tick_details);
 
         let multiplier_bitmaps = params.multiplier_bitmaps;
 
@@ -104,7 +108,7 @@ module {
         multiplier_bitmaps.put(multiplier, new_ref_bitmap);
 
         return ?{
-            reference_tick = params.reference_tick;
+            reference_tick = reference_tick;
             tick_shares = user_tick_shares;
         };
 
@@ -116,14 +120,13 @@ module {
     //reference tick of order does not exist or is uninitialised
     ///
 
-    public func _removeOrder(params : Types.RemoveOrderParams) : ?Types.RemoveOrderResult {
+    public func _removeOrder(params : Types.RemoveOrderParams, ticks_spacing : Nat) : ?Types.RemoveOrderResult {
 
         let order_details = params.order_details;
 
         let reference_tick = order_details.reference_tick;
 
-        let multiplier = reference_tick / C.HUNDRED_BASIS_POINT();
-        let bit_position = (reference_tick % C.HUNDRED_BASIS_POINT()) / 10;
+        let (multiplier, bit_position) = F.mulAndBit(reference_tick, ticks_spacing);
 
         let ticks_details = params.ticks_details;
 
@@ -183,27 +186,27 @@ module {
         };
     };
 
-    public func _getBestOffers(buy : Bool, num_of_offers : Nat, current_state_tick : Nat, bitmaps : MBS, ticks_details : TDS) : [(tick : Nat, tick_details : Types.TickDetails)] {
+    public func _getBestOffers(buy : Bool, num_of_offers : Nat, current_state_tick : Nat, bitmaps : MBS, ticks_details : TDS, ticks_spacing : Nat) : [(tick : Nat, tick_details : Types.TickDetails)] {
 
         let best_offers = Buffer.Buffer<(Nat, Types.TickDetails)>(num_of_offers);
 
         var current_tick = current_state_tick;
 
         let max_tick : Nat = if (buy) {
-            current_tick + (10 * C.HUNDRED_BASIS_POINT());
+            current_tick + (10 * C.HUNDRED_BASIS_POINT);
         } else {
-            current_tick - (10 * C.HUNDRED_BASIS_POINT());
+            current_tick - (10 * C.HUNDRED_BASIS_POINT);
         };
 
         label looping while (best_offers.size() <= num_of_offers) {
             // tick multipier
-            let multiplier = current_tick / C.HUNDRED_BASIS_POINT();
-            //  let current_bit_position = (current_tick % C.HUNDRED_BASIS_POINT()) / 10;
+            let multiplier = current_tick / (C.HUNDRED_BASIS_POINT * TICK_SPACING);
+            //  let current_bit_position = (current_tick % C.HUNDRED_BASIS_POINT) / 10;
             switch (bitmaps.get(multiplier)) {
                 // gets the bitmap of the current multiplier
                 case (?bitmap) {
                     // gets the net tick
-                    let next_tick = BitMap.next_initialized_tick(bitmap, current_tick, buy);
+                    let next_tick = BitMap.next_initialized_tick(bitmap, current_tick, buy, ticks_spacing);
 
                     //checks next tick details
                     switch (ticks_details.get(next_tick)) {
@@ -212,7 +215,7 @@ module {
                             if (tick_details.liquidity_base > 0 or tick_details.liquidity_quote > 0) {
                                 best_offers.add((next_tick, tick_details));
                             };
-                            if (SwapMath.exceeded(max_tick, current_tick, buy)) {
+                            if (F.exceeded(max_tick, current_tick, buy)) {
                                 break looping;
                             };
 

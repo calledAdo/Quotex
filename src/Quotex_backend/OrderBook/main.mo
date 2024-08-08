@@ -8,6 +8,7 @@ import SwapMath "../Lib/SwapMath";
 import OrderMath "../Lib/OrderMath";
 import ICRC "../Types/ICRC";
 import Provider "../MarginProvider/main";
+import Calc "../Lib/Calculations";
 
 /// Market actore class
 
@@ -20,11 +21,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
     type OpenOrderParams = Types.OpenOrderParams;
     type OrderDetails = Types.OrderDetails;
 
-    let HUNDRED_BASIS_POINT : Nat = 1_000;
-
-    let BASE_PRICE : Nat = 10 ** 9;
-
-    let users_orders = HashMap.HashMap<Principal, Buffer.Buffer<OrderDetails>>(1, Principal.equal, Principal.hash); // initial capcity of two
+    let users_orders = HashMap.HashMap<Principal, Buffer.Buffer<OrderDetails>>(1, Principal.equal, Principal.hash);
 
     var multiplier_bitmaps = HashMap.HashMap<Nat, Nat>(
         1,
@@ -39,7 +36,15 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         Types.natHash,
     );
 
-    stable var market_details = details;
+    stable let market_details = details;
+
+    stable var state_details : Types.StateDetails = {
+        flipping_amount_quote = 0;
+        flipping_amount_base = 0;
+        interest_rate = 0;
+        spam_penalty_fee = 0;
+        max_leverage = 0;
+    };
 
     stable var current_tick : Nat = init_tick;
 
@@ -63,13 +68,19 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             to_buy = buy;
             amount_in = amount;
             init_tick = current_tick;
-            stopping_tick = defMaxTick(current_tick, buy);
-            snapshot_price = BASE_PRICE;
+            stopping_tick = Calc.defMaxTick(current_tick, buy);
             multiplier_bitmaps = multiplier_bitmaps;
             ticks_details = ticks_details;
         };
 
-        let swap_result = SwapMath.swap(params);
+        let swap_constants : Types.SwapConstants = {
+            base_token_decimal = market_details.base_token_decimal;
+            quote_token_decimal = market_details.quote_token_decimal;
+            base_price_multiplier = market_details.base_price_multiplier;
+            tick_spacing = market_details.tick_spacing;
+        };
+
+        let swap_result = SwapMath.swap(params, swap_constants);
 
         return (swap_result.amount_out, swap_result.amount_remaining);
 
@@ -80,8 +91,22 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
     /// see OrderMath.getsBestOffers for clarification;
     public query func getBestOffers() : async (best_buys : [(Nat, TickDetails)], best_sells : [(Nat, TickDetails)]) {
-        let best_buys = OrderMath._getBestOffers(true, 10, current_tick, multiplier_bitmaps, ticks_details);
-        let best_sells = OrderMath._getBestOffers(false, 10, current_tick, multiplier_bitmaps, ticks_details);
+        let best_buys = OrderMath._getBestOffers(
+            true,
+            10,
+            current_tick,
+            multiplier_bitmaps,
+            ticks_details,
+            market_details.tick_spacing,
+        );
+        let best_sells = OrderMath._getBestOffers(
+            false,
+            10,
+            current_tick,
+            multiplier_bitmaps,
+            ticks_details,
+            market_details.tick_spacing,
+        );
 
         return (best_buys, best_sells);
     };
@@ -101,8 +126,14 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
         let max_tick : Nat = switch (m_tick) {
             case (?res) { res };
-            case (_) { defMaxTick(current_tick, buy) };
+            case (_) { Calc.defMaxTick(current_tick, buy) };
         };
+
+        // max_tick should be between the default minimum tick for a sell order and the default  maximum tick for a buy
+        let not_exceeded = max_tick <= Calc.defMaxTick(current_tick, true) and max_tick >= Calc.defMaxTick(current_tick, false);
+
+        // double asserts use seperately to avoid possible contradictions
+        assert (not_exceeded);
 
         let (asset_in, asset_out) = if (buy) {
             (market_details.quote_token, market_details.base_token);
@@ -110,17 +141,12 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             (market_details.base_token, market_details.quote_token);
         };
 
-        // max_tick should be between the default minimum tick for a sell order and the default  maximum tick for a buy
-        let not_exceeded = max_tick <= defMaxTick(current_tick, true) and max_tick >= defMaxTick(current_tick, false);
-
-        assert (
-            (await _send_asset_in(caller, asset_in, amount_in)) and not_exceeded
-        );
+        assert ((await _send_asset_in(caller, asset_in, amount_in)));
 
         let (amount_out, amount_remaining) = _swap(amount_in, max_tick, buy);
         ignore (
-            await _send_asset_out(caller, asset_out, amount_out),
-            await _send_asset_out(caller, asset_in, amount_remaining),
+            unchecked_send_asset_out(caller, asset_out, amount_out),
+            unchecked_send_asset_out(caller, asset_in, amount_remaining),
         );
 
         return (amount_out, amount_remaining);
@@ -142,9 +168,9 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
         // gets min flipping amount
         let (min_flipping_amount : Nat, asset_in : Principal) = if (reference_tick > current_tick) {
-            (market_details.flipping_amount_base, market_details.base_token);
+            (state_details.flipping_amount_base, market_details.base_token);
         } else {
-            (market_details.flipping_amount_quote, market_details.quote_token);
+            (state_details.flipping_amount_quote, market_details.quote_token);
         };
 
         assert (await _send_asset_in(caller, asset_in, amount_in));
@@ -176,20 +202,20 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
     ///
 
     public shared ({ caller }) func removeOrder(order_id : Nat) : async () {
-        let caller_orders = switch (users_orders.get(caller)) {
+        let user_orders = switch (users_orders.get(caller)) {
             case (?res) { res };
             case (_) { return () };
         };
-        let order : Types.OrderDetails = caller_orders.get(order_id);
+        let order : Types.OrderDetails = user_orders.get(order_id);
 
         let (amount_base, amount_quote) = switch (_removeOrder(order)) {
             case (?res) { res };
             case (_) { return () };
         };
         ignore (
-            caller_orders.remove(order_id),
-            await _send_asset_out(caller, market_details.base_token, amount_base),
-            await _send_asset_out(caller, market_details.quote_token, amount_quote),
+            user_orders.remove(order_id),
+            unchecked_send_asset_out(caller, market_details.base_token, amount_base),
+            unchecked_send_asset_out(caller, market_details.quote_token, amount_quote),
         );
 
     };
@@ -205,11 +231,18 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
     public shared ({ caller }) func openPosition(collateral : Nat, debt : Nat, isLong : Bool, m_tick : ?Nat) : async () {
 
         var order_value = collateral + debt;
+        //assert max _leverage is not exceeded
+        assert ((order_value / collateral) < state_details.max_leverage);
+
         let max_tick : Nat = switch (m_tick) {
             case (?res) { res };
-            case (_) { defMaxTick(current_tick, isLong) };
+            case (_) { Calc.defMaxTick(current_tick, isLong) };
         };
 
+        // max_tick should be between the default minimum tick for a sell order and the default  maximum tick for a buy
+        let not_exceeded = max_tick <= Calc.defMaxTick(current_tick, true) and max_tick >= Calc.defMaxTick(current_tick, false);
+
+        assert (not_exceeded);
         //as
         let (asset_in, asset_out) = if (isLong) {
             (market_details.quote_token, market_details.base_token);
@@ -224,10 +257,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             subaccount = ?Principal.toBlob(market_details.margin_provider);
         };
 
-        let tx1_in = await _move_asset(asset_in, collateral, from_subaccount, to_account);
-
-        //assert max _leverage is not exceeded  and caller  has sufficient asset for position collateral ;
-        assert ((order_value / collateral < market_details.max_leverage) and tx1_in);
+        assert (await _move_asset(asset_in, collateral, from_subaccount, to_account));
 
         if (not (await _send_asset_in(market_details.margin_provider, asset_in, order_value))) {
             // refund caller if margin_provider lacks enough liquidity ;
@@ -237,6 +267,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
                 subaccount = ?Principal.toBlob(caller);
             };
             ignore unchecked_move_asset(asset_in, collateral, from_subaccount, to_account);
+            return ();
         };
 
         switch (await _openPosition(caller, collateral, debt, max_tick, isLong)) {
@@ -250,7 +281,8 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             case (_) {
                 ignore (
                     unchecked_send_asset_out(market_details.margin_provider, asset_in, debt),
-                    unchecked_send_asset_out(caller, asset_in, collateral - market_details.spam_penalty_fee),
+                    // caller penalised for possible spamming
+                    unchecked_send_asset_out(caller, asset_in, collateral - state_details.spam_penalty_fee),
                 );
                 return ();
             };
@@ -269,12 +301,13 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         assert (caller == position_details.owner);
         let margin_provider_actor : Provider.Provider = actor (Principal.toText(market_details.margin_provider));
 
-        //Checks if user already has a position ,exits function
-        let inValid = await margin_provider_actor.userHasPosition(position_details.owner);
-        if (inValid) {
+        //Checks if user already has a position owns a position with position_details
+        let valid = await margin_provider_actor.positionExist(position_details.owner, position_details);
+        if (not valid) {
             return ();
         };
 
+        // if closing a long position ,it's a sell swap
         let buy = not position_details.isLong;
 
         let (asset_in, asset_out) = if (buy) {
@@ -294,11 +327,14 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         };
 
         let (total_fee, amount_out, amount_remaining) = await _closePosition(position_details);
-        if (amount_out >= total_fee) {
+        if (amount_out > total_fee) {
             ignore (
                 unchecked_send_asset_out(market_details.margin_provider, asset_out, total_fee),
                 unchecked_send_asset_out(position_details.owner, asset_out, amount_out - total_fee),
+                unchecked_send_asset_out(position_details.owner, asset_in, amount_remaining)
+
             );
+            return ()
 
         } else {
             ignore unchecked_send_asset_out(market_details.margin_provider, asset_out, amount_out);
@@ -325,11 +361,18 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             amount_in = amount_in;
             init_tick = current_tick;
             stopping_tick = max_tick;
-            snapshot_price = BASE_PRICE;
             multiplier_bitmaps = multiplier_bitmaps;
             ticks_details = ticks_details;
         };
-        let swap_result = SwapMath.swap(params);
+
+        let swap_constants : Types.SwapConstants = {
+            base_token_decimal = market_details.base_token_decimal;
+            quote_token_decimal = market_details.quote_token_decimal;
+            base_price_multiplier = market_details.base_price_multiplier;
+            tick_spacing = market_details.tick_spacing;
+        };
+
+        let swap_result = SwapMath.swap(params, swap_constants);
 
         current_tick := swap_result.current_tick;
 
@@ -356,7 +399,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             ticks_details = ticks_details;
         };
         // returns null if reference tick is flipped and amount in is less than minimum flipping amount ;
-        return OrderMath._placeOrder(params);
+        return OrderMath._placeOrder(params, market_details.tick_spacing);
     };
 
     /// _removeOrder function
@@ -379,7 +422,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
             ticks_details = ticks_details;
         };
 
-        let remove_order_result = switch (OrderMath._removeOrder(params)) {
+        let remove_order_result = switch (OrderMath._removeOrder(params, market_details.tick_spacing)) {
             case (?res) { res };
             case (_) { return null };
         };
@@ -390,7 +433,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
     ///  _openPosition function
 
-    // Position token is the token being bought (token out) while Debt token is the token being shorted (token in)
+    // @dev Position token is the token being longed (token out) while Debt token is the token being shorted (token in)
 
     ///    returns
 
@@ -412,18 +455,17 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
         let (amount_out, amount_remaining) = _swap(order_value, max_tick, isLong);
 
+        // should fail if debt was not utilised
         if (amount_remaining >= debt) {
             return null;
         };
 
-        order_value -= amount_remaining;
-
         let position_details : Types.PositionDetails = {
             owner = caller;
             isLong = isLong;
-            debt = order_value - collateral;
+            debt = debt - amount_remaining;
             order_size = amount_out;
-            interest_rate = market_details.interest_rate;
+            interest_rate = state_details.interest_rate;
             time = Time.now();
         };
 
@@ -446,24 +488,23 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         let margin_provider_actor : Provider.Provider = actor (Principal.toText(market_details.margin_provider));
 
         let buy = not position_details.isLong;
-        let (amount_out, amount_remaining) = _swap(position_details.order_size, defMaxTick(current_tick, buy), buy);
-        let interest_fee = calcInterest(position_details.debt, position_details.interest_rate, position_details.time);
+        let (amount_out, amount_remaining) = _swap(position_details.order_size, Calc.defMaxTick(current_tick, buy), buy);
+        let interest_fee = Calc.calcInterest(position_details.debt, position_details.interest_rate, position_details.time);
 
         let total_fee = interest_fee + position_details.debt;
         if (amount_remaining != 0) {
-            // updates user position
-            let new_debt : Nat = switch (total_fee > amount_out) {
-                case (true) {
-                    total_fee - amount_out;
-                };
-                case (false) {
-                    0;
-                };
+            // if amount_out is just sufficient enough to cover debt ;
+            //position should be closed with debt paid in Debt token and all other assets
+            //sent to position owner
+            if (amount_out >= total_fee) {
+                return (total_fee, amount_out, amount_remaining);
             };
-            let new_position_details = {
+
+            // updates user position
+            let new_position_details : Types.PositionDetails = {
                 owner = position_details.owner;
                 isLong = position_details.isLong;
-                debt = new_debt;
+                debt = total_fee - amount_out;
                 order_size = amount_remaining;
                 interest_rate = position_details.interest_rate;
                 time = Time.now();
@@ -475,6 +516,20 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
     };
 
+    // ===== asset management_functions ============
+
+    ///NOTE: user account is identified as an ICRC Account with owner as Market actor and subaccount
+    /// made from converting user principal to Blob
+    /// eg
+    //   let account = {
+    //     owner = Principal.fromActor(this);
+    //     subaccount = ?Principal.toBlob(user);
+    // };
+
+    //_send_asset_in_function
+    // @dev moves asset from user account into main or null account and await the result
+    //returns true if transaction was successful or false otherwise .
+
     private func _send_asset_in(user : Principal, asset_principal : Principal, amount : Nat) : async Bool {
         let account = {
             owner = Principal.fromActor(this);
@@ -483,6 +538,10 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         return await _move_asset(asset_principal, amount, ?Principal.toBlob(user), account);
 
     };
+
+    //_send_asset_out_function
+    // @dev moves asset from   main or null account to user account and await the result
+    //returns true if transaction was successful or false otherwise .
 
     private func _send_asset_out(user : Principal, asset_principal : Principal, amount : Nat) : async Bool {
         if (amount == 0) {
@@ -495,6 +554,10 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         return await _move_asset(asset_principal, amount, null, account);
 
     };
+
+    //_move_asset function
+    // @dev moves asset from one account to another  and await the result
+    //returns true if transaction was successful or false otherwise .
 
     private func _move_asset(asset_principal : Principal, amount : Nat, from_sub : ?Blob, account : ICRC.Account) : async Bool {
         if (amount == 0) {
@@ -518,6 +581,10 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
     };
 
+    //unchecked_send_asset_out function
+    // @dev moves asset from main or null account to user account  but does not await the result
+    // reduces trnsaction time
+
     private func unchecked_send_asset_out(user : Principal, asset_principal : Principal, amount : Nat) : async () {
         if (amount == 0) {
             return ();
@@ -529,6 +596,10 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
         ignore unchecked_move_asset(asset_principal, amount, null, account);
 
     };
+
+    //unchecked_move_asset function
+    // @dev moves asset from main one account to another account  but does not await the result
+    // reduces trnsaction time
 
     private func unchecked_move_asset(asset_principal : Principal, amount : Nat, from_sub : ?Blob, account : ICRC.Account) : async () {
         if (amount == 0) {
@@ -547,30 +618,6 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, init_tick 
 
         ignore asset.icrc1_transfer(transferArgs);
 
-    };
-
-    private func defMaxTick(current_tick : Nat, buy : Bool) : Nat {
-        if (buy) {
-            current_tick + (10 * HUNDRED_BASIS_POINT);
-        } else {
-            current_tick - (10 * HUNDRED_BASIS_POINT);
-        };
-    };
-
-    private func calcInterest(amount : Nat, interest_rate : Nat, start_time : Int) : Nat {
-
-        var fee = 0;
-        let one_hour = 3600 * (10 ** 9);
-
-        var starting_time = start_time;
-        let current_time = Time.now();
-
-        while (starting_time < current_time) {
-            fee += (interest_rate * amount) / (100 * HUNDRED_BASIS_POINT);
-            starting_time += one_hour;
-        };
-
-        return fee;
     };
 
 };

@@ -13,11 +13,16 @@ module {
     public type MarketDetails = {
         base_token : Principal;
         base_token_decimal : Nat;
-        flipping_amount_base : Nat;
         quote_token : Principal;
         quote_token_decimal : Nat;
-        flipping_amount_quote : Nat;
+        tick_spacing : Nat;
+        base_price_multiplier : Nat;
         margin_provider : Principal;
+    };
+
+    public type StateDetails = {
+        flipping_amount_quote : Nat;
+        flipping_amount_base : Nat;
         interest_rate : Nat;
         spam_penalty_fee : Nat;
         max_leverage : Nat;
@@ -59,15 +64,20 @@ module {
         amount_in : Nat;
         init_tick : Nat;
         stopping_tick : Nat;
-        snapshot_price : Nat;
         multiplier_bitmaps : HashMap.HashMap<Nat, Nat>;
         ticks_details : HashMap.HashMap<Nat, TickDetails>;
+    };
+
+    public type SwapConstants = {
+        base_token_decimal : Nat;
+        quote_token_decimal : Nat;
+        base_price_multiplier : Nat;
+        tick_spacing : Nat;
     };
 
     public type SwapAtTickResult = {
         amount_out : Nat;
         amount_remaining : Nat;
-
     };
 
     public type SwapResult = {

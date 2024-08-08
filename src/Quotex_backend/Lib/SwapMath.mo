@@ -1,26 +1,14 @@
 import Types "../Types/Types";
 import BitMap "BitMap";
 import PriceMath "PriceMath";
-import C "PureFuncs";
+
+import F "Calculations";
 
 module {
 
-    public func exceeded(stopping_tick : Nat, current_tick : Nat, buy : Bool) : Bool {
-        switch (buy) {
-            case (true) {
-                if (current_tick > stopping_tick) { return true } else {
-                    return false;
-                };
-            };
-            case (false) {
-                if (current_tick < stopping_tick) { return true } else {
-                    return false;
-                };
-            };
-        };
-    };
+    /// swap function
 
-    public func swap(params : Types.SwapParams) : Types.SwapResult {
+    public func swap(params : Types.SwapParams, constants : Types.SwapConstants) : Types.SwapResult {
 
         let ticks_details = params.ticks_details;
 
@@ -29,7 +17,7 @@ module {
         var amount_out = 0;
         var amount_remaining = params.amount_in;
 
-        label swaploop while (not exceeded(params.stopping_tick, current_tick, params.to_buy)) {
+        label swaploop while (not F.exceeded(params.stopping_tick, current_tick, params.to_buy)) {
 
             // create  new swap parameters  for every new iteration of the loop
             let new_params = {
@@ -37,13 +25,12 @@ module {
                 amount_in = amount_remaining;
                 init_tick = current_tick;
                 stopping_tick = params.stopping_tick;
-                snapshot_price = params.snapshot_price;
                 multiplier_bitmaps = params.multiplier_bitmaps;
                 ticks_details = ticks_details;
             };
 
             //
-            let swap_result = swap_at_tick(new_params);
+            let swap_result = swap_at_tick(new_params, constants);
 
             // multiplier_bitmaps := swap_result.new_bitmaps;
 
@@ -58,8 +45,7 @@ module {
             };
 
             //
-            let current_multiplier = current_tick / C.HUNDRED_BASIS_POINT();
-
+            let (current_multiplier, _) = F.mulAndBit(current_tick, constants.tick_spacing);
             //multiplier_bitmaps for current multiplier ;
             let current_bitmap : Nat = switch (params.multiplier_bitmaps.get(current_multiplier)) {
                 case (?res) { res };
@@ -68,7 +54,7 @@ module {
                 };
             };
 
-            current_tick := BitMap.next_initialized_tick(current_bitmap, current_tick, params.to_buy);
+            current_tick := BitMap.next_initialized_tick(current_bitmap, current_tick, params.to_buy, constants.tick_spacing);
 
         };
 
@@ -79,10 +65,7 @@ module {
         };
     };
 
-    private func swap_at_tick(params : Types.SwapParams) : Types.SwapAtTickResult {
-
-        let multiplier = params.init_tick / C.HUNDRED_BASIS_POINT();
-        let bit_position = (params.init_tick % C.HUNDRED_BASIS_POINT()) / 10;
+    private func swap_at_tick(params : Types.SwapParams, constants : Types.SwapConstants) : Types.SwapAtTickResult {
 
         //var amount out = set to zero
         var amount_out = 0;
@@ -92,7 +75,7 @@ module {
         let ticks_details = params.ticks_details;
 
         //calculate the current price
-        let tick_price = PriceMath.tick_to_price(multiplier, bit_position, params.snapshot_price);
+        let tick_price = PriceMath.tick_to_price(params.init_tick, constants.base_price_multiplier);
 
         let current_tick_details = switch (ticks_details.get(params.init_tick)) {
             case (?res) { res };
@@ -110,7 +93,7 @@ module {
             case (false) { current_tick_details.liquidity_quote };
         };
         // get the equivalent amount of token equivalent to liquidity (base or quote token ,depending on buy or sell trade)
-        let init_liquidity_equivalent = PriceMath._equivalent(init_tick_liquidity, tick_price, not params.to_buy);
+        let init_liquidity_equivalent = PriceMath._equivalent(init_tick_liquidity, tick_price, not params.to_buy, constants);
 
         if (init_liquidity_equivalent <= params.amount_in) {
 
@@ -140,7 +123,7 @@ module {
 
         } else {
 
-            amount_out := PriceMath._equivalent(params.amount_in, tick_price, params.to_buy);
+            amount_out := PriceMath._equivalent(params.amount_in, tick_price, params.to_buy, constants);
 
             amount_remaining := 0;
 
