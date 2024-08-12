@@ -1,7 +1,7 @@
 {
   "canisters": {
     "Market": {
-      "main": "src/Quotex_backend/OrderBook/main.mo",
+      "main": "src/Quotex_backend/Market/main.mo",
       "type": "motoko"
     },
     "test": {

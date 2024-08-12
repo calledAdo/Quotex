@@ -13,11 +13,26 @@ module {
         return (multiplier, bit_position);
     };
 
-    public func defMaxTick(current_tick : Nat, buy : Bool) : Nat {
-        if (buy) {
+    public func defMaxTick(current_tick : Nat, in1out0 : Bool) : Nat {
+        if (in1out0) {
             current_tick + (50 * C.HUNDRED_PERCENT);
         } else {
             current_tick - (50 * C.HUNDRED_PERCENT);
+        };
+    };
+
+    public func exceeded(stopping_tick : Nat, current_tick : Nat, in1out0 : Bool) : Bool {
+        switch (in1out0) {
+            case (true) {
+                if (current_tick > stopping_tick) { return true } else {
+                    return false;
+                };
+            };
+            case (false) {
+                if (current_tick < stopping_tick) { return true } else {
+                    return false;
+                };
+            };
         };
     };
 
@@ -37,18 +52,33 @@ module {
         return fee;
     };
 
-    public func exceeded(stopping_tick : Nat, current_tick : Nat, buy : Bool) : Bool {
-        switch (buy) {
-            case (true) {
-                if (current_tick > stopping_tick) { return true } else {
-                    return false;
-                };
-            };
-            case (false) {
-                if (current_tick < stopping_tick) { return true } else {
-                    return false;
-                };
-            };
+    /// calcShares function
+    /// calculates the measure of liquidity provided by a particular order at a tick
+
+    /// params
+    /// amount_in : amount of order liquidity (base or quote token)
+    /// init_total_shares : the total shares owned by all orders providing liquidity at that tick;
+    /// init_liquidity :  the amount of liquidity already within the tick
+
+    public func calcShares(amount_in : Nat, init_total_shares : Nat, init_liquidity : Nat) : Nat {
+        if (init_liquidity == 0) {
+            return amount_in;
         };
+        return (amount_in * init_total_shares) / init_liquidity;
     };
+
+    /// calcSharesValue function
+    /// calculates the value of any amount of liquidity shares at a particular tick given the total liquidity at that tick
+
+    ///shares : total shares
+    ///init_total_shares : the total_amount of shares of orders at that tick
+    /// init_liquidity : the current amount of liquidity
+    public func calcSharesValue(shares : Nat, init_total_shares : Nat, init_liquidity : Nat) : Nat {
+        return (shares * init_liquidity) / init_total_shares;
+    };
+
+    public func percentage(x : Nat, amount : Nat) : Nat {
+        return (x * amount) / C.HUNDRED_PERCENT;
+    };
+
 };

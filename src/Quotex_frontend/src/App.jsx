@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { Quotex_backend } from 'declarations/Quotex_backend';
+import { useState } from "react";
+import { Quotex_backend } from "declarations/Quotex_backend";
 
+//https://stackoverflow.com/questions/76030373/tutorials-for-the-implementation-of-internet-identity-with-react
 function App() {
-  const [greeting, setGreeting] = useState('');
+  const [greeting, setGreeting] = useState("");
 
   function handleSubmit(event) {
     event.preventDefault();

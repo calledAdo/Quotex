@@ -18,4 +18,6 @@ module {
 
     public let HUNDRED_PERCENT = 100_000; // 10,000 basis points
 
+    public let BASE_UNITS = 1_000_000_000_000_000_000; //(10 ** 18)
+
 };

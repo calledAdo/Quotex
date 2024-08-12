@@ -31,7 +31,7 @@ module {
 
     };
 
-    public func next_initialized_tick(bitmap : Nat, tick : Nat, buy : Bool, tick_spacing : Nat) : Nat {
+    public func next_initialized_tick(bitmap : Nat, tick : Nat, in1out0 : Bool, tick_spacing : Nat) : Nat {
         let first_bitmap = Nat64.fromNat(bitmap / (2 ** 64));
         let second_bitmap = Nat64.fromNat(bitmap - (Nat64.toNat(first_bitmap) * (2 ** 64)));
 
@@ -39,21 +39,27 @@ module {
 
         if (current_bit_position <= 35) {
 
-            switch (_next_tick_first_bitmap(first_bitmap, multiplier, current_bit_position, buy, tick_spacing)) {
+            switch (_next_tick_first_bitmap(first_bitmap, multiplier, current_bit_position, in1out0, tick_spacing)) {
                 case (?res) { return res };
                 case (_) {
-                    return _next_tick_second_bitmap(first_bitmap, second_bitmap, multiplier, 35, buy, tick_spacing);
+                    return _next_tick_second_bitmap(first_bitmap, second_bitmap, multiplier, 35, in1out0, tick_spacing);
                 };
             };
         } else {
-            return _next_tick_second_bitmap(first_bitmap, second_bitmap, multiplier, current_bit_position, buy, tick_spacing);
+            return _next_tick_second_bitmap(first_bitmap, second_bitmap, multiplier, current_bit_position, in1out0, tick_spacing);
         };
     };
 
-    private func _next_tick_first_bitmap(first_bitmap : Nat64, multiplier : Nat, current_bit_position : Nat, buy : Bool, tick_spacing : Nat) : ?Nat {
+    private func _next_tick_first_bitmap(
+        first_bitmap : Nat64,
+        multiplier : Nat,
+        current_bit_position : Nat,
+        in1out0 : Bool,
+        tick_spacing : Nat,
+    ) : ?Nat {
 
         let reference : Nat = 35 - current_bit_position;
-        if (buy) {
+        if (in1out0) {
             let mask : Nat64 = Nat64.fromNat((2 ** reference) - 1); // (1 << reference) - 1
             let masked = Nat64.bitand(first_bitmap, mask);
             if (masked == 0) {
@@ -79,15 +85,24 @@ module {
                 return ?(((multiplier - 1) * HUNDRED_PERCENT) * tick_spacing);
             } else {
 
-                return ?(((multiplier * HUNDRED_PERCENT) + (bitcalc.least_significant_bit_position(masked, 29) * HUNDRED_BASIS_POINT)) * tick_spacing);
+                return ?(
+                    ((multiplier * HUNDRED_PERCENT) + (bitcalc.least_significant_bit_position(masked, 29) * HUNDRED_BASIS_POINT)) * tick_spacing
+                );
             };
         };
     };
 
-    private func _next_tick_second_bitmap(first_bitmap : Nat64, second_bitmap : Nat64, multiplier : Nat, current_bit_position : Nat, buy : Bool, tick_spacing : Nat) : Nat {
+    private func _next_tick_second_bitmap(
+        first_bitmap : Nat64,
+        second_bitmap : Nat64,
+        multiplier : Nat,
+        current_bit_position : Nat,
+        in1out0 : Bool,
+        tick_spacing : Nat,
+    ) : Nat {
 
         let reference : Nat = 99 - current_bit_position;
-        if (buy) {
+        if (in1out0) {
             let mask = Nat64.fromNat((2 ** reference) - 1);
 
             let masked = Nat64.bitand(second_bitmap, mask);
