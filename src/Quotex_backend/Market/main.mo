@@ -1,19 +1,22 @@
 import Nat "mo:base/Nat";
 import Principal "mo:base/Principal";
+
 import HashMap "mo:base/HashMap";
 import Buffer "mo:base/Buffer";
 import Time "mo:base/Time";
-import Types "Types";
-import ICRC "../Interface/ICRC";
+import Types "../Interface/Types";
 import SwapLib "../Lib/SwapLib";
 import OrderLib "../Lib/OrderLib";
 import Calc "../Lib/Calculations";
-
 import Vault "../Vault/main";
 
-/// Market actor class
+/*
 
-/// important constants
+  Name :Market Actor
+  Author :CalledDao
+
+
+*/
 
 shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : Principal, initTick : Nat) = this {
 
@@ -21,6 +24,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     type SwapParams = Types.SwapParams;
     type OpenOrderParams = Types.OpenOrderParams;
     type OrderDetails = Types.OrderDetails;
+    type StateDetails = Types.StateDetails;
 
     let m_users_orders = HashMap.HashMap<Principal, Buffer.Buffer<OrderDetails>>(1, Principal.equal, Principal.hash);
 
@@ -37,20 +41,24 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
         Types.natHash,
     );
 
+    let admin = caller;
+
+    let approved_liquidators = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
+
     stable let market_details = details;
 
     stable let vault : Vault.Vault = actor (Principal.toText(vaultID));
 
-    stable var state_details : Types.StateDetails = {
+    stable var state_details : StateDetails = {
         min_units_token1 = 0;
         min_units_token0 = 0;
         interest_rate = 0;
         token0_spam_fee = 0;
         token1_spam_fee = 0;
-        max_leverage = 0;
+        max_leverageX10 = 500;
     };
 
-    stable var current_tick : Nat = initTick;
+    var current_tick : Nat = initTick;
 
     // ======== Query Functions ==========
 
@@ -90,30 +98,66 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
 
     };
 
+    public query func tickDetails(reference_tick : Nat) : async Types.TickDetails {
+        let ref_tick_details = switch (m_ticks_details.get(reference_tick)) {
+            case (?res) { res };
+            case (_) {
+                {
+                    liquidity_token0 = 0;
+                    liquidity_token1 = 0;
+                    total_shares = 0;
+                };
+            };
+        };
+        return ref_tick_details;
+    };
+
     /// Query calls that returns the best offers for both buys and sells
     /// serves as an ideal getter function for an orderbook display
 
     /// see OrderLib.getsBestOffers for clarification;
-    public query func getBestOffers() : async (best_buys : [(Nat, TickDetails)], best_sells : [(Nat, TickDetails)]) {
+    public query func getBestOffers() : async (best_buys : [(Nat, TickDetails)]) {
 
         let best_buys = OrderLib._getBestOffers(
             true,
-            10,
+            2,
             current_tick,
             m_multipliers_bitmaps,
             m_ticks_details,
             market_details.tick_spacing,
         );
-        let best_sells = OrderLib._getBestOffers(
-            false,
-            10,
-            current_tick,
-            m_multipliers_bitmaps,
-            m_ticks_details,
-            market_details.tick_spacing,
-        );
+        // let best_sells = OrderLib._getBestOffers(
+        //     false,
+        //     2,
+        //     current_tick,
+        //     m_multipliers_bitmaps,
+        //     m_ticks_details,
+        //     market_details.tick_spacing,
+        // );
 
-        return (best_buys, best_sells);
+        return (best_buys);
+    };
+
+    // =========== Admin functions ===========
+
+    public shared ({ caller }) func updateState(new_state_details : ?StateDetails, current_tick : ?Nat) : async () {
+        assert (caller == admin);
+        switch (new_state_details) {
+            case (?res) { state_details := res };
+            case (_) {};
+        };
+
+    };
+
+    public shared ({ caller }) func changeLiquidatorStatus(id : Principal, status : Bool) : async Bool {
+        if (status) {
+            approved_liquidators.put(id, true);
+            return true;
+        } else {
+            approved_liquidators.delete(id);
+            return false;
+        };
+
     };
 
     // ====== Public functions ======
@@ -127,36 +171,42 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     ///   in1out0 :true if sending in Quote token for Base Token
     ///
 
-    public shared ({ caller }) func swap(amount_in : Nat, m_tick : ?Nat, in1out0 : Bool) : async (amount_out : Nat, amount_remaining : Nat) {
+    public shared ({ caller }) func swap(amount_in : Nat, m_tick : ?Nat, in1out0 : Bool) : async {
+        #Ok : (amount_out : Nat, amount_remaining : Nat);
+        #Err : Text;
+    } {
 
         let max_tick : Nat = switch (m_tick) {
             case (?res) { res };
             case (_) { Calc.defMaxTick(current_tick, in1out0) };
         };
 
-        // max_tick should be between the default minimum tick for a sell order and the default  maximum tick for a in1out0
+        // max_tick should be between the default minimum tick for a sell order and the default  maximum tick for a buy order
         let not_exceeded = max_tick <= Calc.defMaxTick(current_tick, true) and max_tick >= Calc.defMaxTick(current_tick, false);
 
-        // double asserts use seperately to avoid possible contradictions
         assert (not_exceeded);
 
-        let (asset_in, asset_out, min_amount) = if (in1out0) {
-            (market_details.token1, market_details.token0, state_details.min_units_token1);
+        let { token0; token0_fee; token1; token1_fee } = market_details;
+
+        let (asset_in : Principal, asset_in_fee : Nat, asset_out : Principal, asset_out_fee : Nat, min_amount : Nat) = if (in1out0) {
+            (token1, token1_fee, token0, token0_fee, state_details.min_units_token1);
         } else {
-            (market_details.token0, market_details.token1, state_details.min_units_token0);
+            (token0, token0_fee, token1, token1_fee, state_details.min_units_token0);
         };
 
-        assert (amount_in >= min_amount);
+        if (min_amount > amount_in) {
+            return #Err("amount in smaller than min _amount");
+        };
 
-        assert (await _send_asset_in(caller, asset_in, amount_in));
+        assert (await _send_asset_in(caller, asset_in, amount_in, asset_in_fee));
 
         let (amount_out, amount_remaining) = _swap(amount_in, max_tick, in1out0);
         ignore (
-            unchecked_send_asset_out(caller, asset_out, amount_out),
-            unchecked_send_asset_out(caller, asset_in, amount_remaining),
+            unchecked_send_asset_out(caller, asset_out, amount_out, asset_out_fee),
+            unchecked_send_asset_out(caller, asset_in, amount_remaining, asset_in_fee),
         );
 
-        return (amount_out, amount_remaining);
+        return #Ok(amount_out, amount_remaining);
 
     };
 
@@ -169,20 +219,27 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     ///    NOTE: amount_in should be gretaer than min_trading amount for the respective token ;
     ///
 
-    public shared ({ caller }) func placeOrder(amount_in : Nat, reference_tick : Nat) : async Types.OrderDetails {
+    public shared ({ caller }) func placeOrder(amount_in : Nat, reference_tick : Nat) : async {
+        #Ok : Types.OrderDetails;
+        #Err : Text;
+    } {
         //orders can not be placed at current_tick
         assert (reference_tick != current_tick);
 
-        // gets the min tradeable
-        let (min_amount : Nat, asset_in : Principal) = if (reference_tick > current_tick) {
-            (state_details.min_units_token0, market_details.token0);
+        let { token0; token0_fee; token1; token1_fee } = market_details;
+
+        // gets the min _tradable amount ,the asset sent in and the asset_fee
+        let (min_amount : Nat, asset_in : Principal, asset_in_fee : Nat) = if (reference_tick > current_tick) {
+            (state_details.min_units_token0, token0, token0_fee);
         } else {
-            (state_details.min_units_token1, market_details.token1);
+            (state_details.min_units_token1, token1, token1_fee);
         };
 
-        assert (amount_in >= min_amount);
+        if (min_amount > amount_in) {
+            return #Err("amount in smaller than min amount");
+        };
 
-        assert (await _send_asset_in(caller, asset_in, amount_in));
+        assert (await _send_asset_in(caller, asset_in, amount_in, asset_in_fee));
 
         let order_details : OrderDetails = _placeOrder(reference_tick, amount_in);
 
@@ -194,7 +251,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
         user_orders.add(order_details);
         m_users_orders.put(caller, user_orders);
 
-        return order_details;
+        return #Ok(order_details);
     };
 
     /// removeOrder function for cancelling order and withdrawing liquidity for Liquidity Providers
@@ -203,22 +260,28 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     ///      order_id: ID of that particular user order (corresponds to the index of orfer in User Orders Buffer)
     ///
 
-    public shared ({ caller }) func removeOrder(order_id : Nat) : async () {
+    public shared ({ caller }) func removeOrder(order_id : Nat) : async {
+        #Err : Text;
+        #Ok : (amount_token0 : Nat, amount_token1 : Nat);
+    } {
         let user_orders = switch (m_users_orders.get(caller)) {
             case (?res) { res };
-            case (_) { return () };
+            case (_) { return #Err("") };
         };
         let order_details : Types.OrderDetails = user_orders.get(order_id);
 
         let (amount_token0, amount_token1) = switch (_removeOrder(order_details)) {
             case (?res) { res };
-            case (_) { return () };
+            case (_) { return #Err("") };
         };
+        let { token0; token0_fee; token1; token1_fee } = market_details;
         ignore (
             user_orders.remove(order_id),
-            unchecked_send_asset_out(caller, market_details.token0, amount_token0),
-            unchecked_send_asset_out(caller, market_details.token1, amount_token1),
+            unchecked_send_asset_out(caller, token0, amount_token0, token0_fee),
+            unchecked_send_asset_out(caller, token1, amount_token1, token1_fee),
         );
+        m_users_orders.put(caller, user_orders);
+        return #Ok(amount_token0, amount_token1)
 
     };
 
@@ -230,11 +293,17 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     ///  m_tick :The maximum tick acts as the tick of maximum  executing price (if null the default max tick is used)
     ///
 
-    public shared ({ caller }) func openPosition(collateral : Nat, debt : Nat, is1in0out : Bool, m_tick : ?Nat) : async () {
+    public shared ({ caller }) func openPosition(collateral : Nat, leverageX10 : Nat, is1in0out : Bool, m_tick : ?Nat) : async {
+        #Ok;
+        #Err : Text;
+    } {
 
-        var order_value = collateral + debt;
+        assert (leverageX10 < state_details.max_leverageX10);
+
+        var order_value = (collateral * leverageX10) / 10;
+
+        let debt : Nat = order_value - collateral;
         //assert max _leverage is not exceeded
-        assert ((order_value / collateral) < state_details.max_leverage);
 
         let max_tick : Nat = switch (m_tick) {
             case (?res) { res };
@@ -246,125 +315,95 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
 
         assert (within_boundaries);
         //as
-        let (asset_in, asset_out, min_amount) = if (is1in0out) {
-            //if longing
-            (market_details.token1, market_details.token0, state_details.min_units_token1);
+        let { token0; token0_fee; token1; token1_fee } = market_details;
+
+        let (asset_in : Principal, asset_in_fee : Nat, asset_out : Principal, asset_out_fee : Nat, min_amount : Nat) = if (is1in0out) {
+            (token1, token1_fee, token0, token0_fee, state_details.min_units_token1);
         } else {
-            (market_details.token0, market_details.token1, state_details.min_units_token0);
+            (token0, token0_fee, token1, token1_fee, state_details.min_units_token0);
+        };
+        if (min_amount > collateral) {
+            return #Err("collateral is too small");
         };
 
-        assert (min_amount >= collateral);
-
-        var from_subaccount = ?Principal.toBlob(caller);
-
-        var to_account : ICRC.Account = {
-            owner = Principal.fromActor(vault);
-            subaccount = null;
+        switch (await vault.userMarketPosition(caller, Principal.fromActor(this))) {
+            case (?_) { return #Err("User already has a position") };
+            case (_) {};
         };
 
-        assert (await vault.move_asset(asset_in, collateral, from_subaccount, to_account));
+        assert ((await _send_asset_in(caller, asset_in, collateral, asset_in_fee)));
 
-        if (not (await _send_asset_in(market_details.margin_provider, asset_in, debt))) {
-            // refund caller if margin_provider lacks enough liquidity ;
-            from_subaccount := null;
-            to_account := {
-                owner = Principal.fromActor(vault);
-                subaccount = ?Principal.toBlob(caller);
-            };
-            ignore vault.unchecked_move_asset(asset_in, collateral, from_subaccount, to_account);
-            return ();
+        if (not (await vault.enoughLiquidity(asset_in, debt))) {
+
+            ignore unchecked_send_asset_out(caller, asset_in, collateral, asset_in_fee);
+            return #Err("Not enough liqudity");
         };
 
-        switch (await _openPosition(caller, collateral, debt, max_tick, is1in0out)) {
-            case (?(order_size, resulting_debt)) {
-                // order was filled partially with some collatreal being unutilised
-                if (resulting_debt >= debt) {
-                    ignore (
-                        //send back debt
-                        unchecked_send_asset_out(market_details.margin_provider, asset_in, debt),
-                        // send the asset_out to user
-                        unchecked_send_asset_out(caller, asset_out, order_size),
-                        // send back unutilised collateral
-                        unchecked_send_asset_out(caller, asset_in, resulting_debt - debt),
-                    );
-                    return ();
-                };
-                // order was filled either with entire debt or partially
-                ignore (
-                    unchecked_send_asset_out(market_details.margin_provider, asset_in, debt - resulting_debt),
-                    unchecked_send_asset_out(market_details.margin_provider, asset_out, order_size),
-                );
-                return ()
-
-            };
-            case (_) {
-                // user already has a position
-                ignore (
-                    unchecked_send_asset_out(market_details.margin_provider, asset_in, debt),
-
-                    unchecked_send_asset_out(caller, asset_in, collateral),
-                );
-                return ();
-            };
+        let (order_size, amount_remaining) = await _openPosition(caller, collateral, debt, max_tick, is1in0out);
+        // collateral was not used up during swap
+        if (amount_remaining >= debt) {
+            //refund all
+            ignore (
+                // send the asset_out to user
+                unchecked_send_asset_out(caller, asset_out, order_size, asset_out_fee),
+                // send back unutilised collateral
+                unchecked_send_asset_out(caller, asset_in, amount_remaining, asset_in_fee),
+            );
+            return #Err("Debt not utilised");
         };
+        // order was filled either with entire debt or partially but collateral and some debt was used up
 
+        return #Ok;
     };
 
     /// Close Position function
-    /*params
-        position_details  = The details of the position in reference
+    ///params
+    /// position_details  = The details of the position in reference
 
-     NOTE :position_details should be gotten directly from users_positions in margin_provider actor for accuracy
-    */
+    ///NOTE :position_details should be gotten directly from users_positions in margin_provider actor for accuracy
+    ///
 
-    public shared ({ caller }) func closePosition(position_details : Types.PositionDetails) : async () {
-        assert (caller == position_details.owner or caller == market_details.margin_provider);
-
-        //Checks if user already has a position owns a position with position_details
-        let valid = await vault.positionExist(position_details.owner, Principal.fromActor(this), position_details);
-        if (not valid) {
-            return ();
+    public shared ({ caller }) func closePosition(user : Principal) : async {
+        #Ok : Text;
+        #Err : Text;
+    } {
+        let position_details = switch (await vault.userMarketPosition(user, Principal.fromActor(this))) {
+            case (?res) { res };
+            case (_) { return #Err("Position not found") };
         };
+        assert (caller == user or _isApprovedLiqudator(caller));
 
         // if closing a long position ,it's a sell swap
         let in1out0 = not position_details.is1in0out;
 
-        let (asset_in, asset_out) = if (in1out0) {
-            (market_details.token1, market_details.token0);
-        } else {
-            (market_details.token0, market_details.token1);
-        };
+        let { token0; token0_fee; token1; token1_fee } = market_details;
 
-        assert (await _send_asset_in(market_details.margin_provider, asset_in, position_details.order_size));
+        let (asset_in : Principal, asset_in_fee : Nat, asset_out : Principal, asset_out_fee : Nat) = if (in1out0) {
+            (token1, token1_fee, token0, token0_fee);
+        } else {
+            (token0, token0_fee, token1, token1_fee);
+        };
 
         let (total_fee, amount_out, amount_remaining) = await _closePosition(position_details);
         // if amount is just sufficient enough  to pay debt ,position is closed
         if (amount_out >= total_fee) {
             ignore (
-                unchecked_send_asset_out(market_details.margin_provider, asset_out, total_fee),
-                unchecked_send_asset_out(position_details.owner, asset_out, amount_out - total_fee),
-                unchecked_send_asset_out(position_details.owner, asset_in, amount_remaining)
-
+                unchecked_send_asset_out(position_details.owner, asset_out, amount_out - total_fee, asset_out_fee),
+                unchecked_send_asset_out(position_details.owner, asset_in, amount_remaining, asset_in_fee),
             );
-            return ()
-
-        } else {
-            ignore unchecked_send_asset_out(market_details.margin_provider, asset_out, amount_out);
+            return #Ok("Position Closed");
         };
-
-        ignore (
-            unchecked_send_asset_out(market_details.margin_provider, asset_in, amount_remaining)
-        );
+        return #Ok("Position Updated");
     };
 
     // ==============  Private functions ================
 
-    /*returns
+    /// returns
 
-    amount_out = the amount of token received from the swap
-    amount_remaining = amount of token in (token being swapped) remaining after swapping
+    ///  amount_out = the amount of token received from the swap
+    ///  amount_remaining = amount of token in (token being swapped) remaining after swapping
 
-    */
+    ///
 
     private func _swap(amount_in : Nat, max_tick : Nat, in1out0 : Bool) : (amount_out : Nat, amount_remaining : Nat) {
 
@@ -393,10 +432,10 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
 
     ///_placeOrder function
     /// returns
-    ///     OrderDetails comprising of
-    ///        reference_tick = tick corresponding to the order price
-    ///        tick_shares - measure of liquidity provided by order at that particular tick
-
+    ///     OrderDetails comprising of .
+    ///        reference_tick = tick corresponding to the order price .
+    ///        tick_shares - measure of liquidity provided by order at that particular tick .
+    ///
     ///   returns null if tick is initilaised(flipped)
     ///
 
@@ -414,15 +453,15 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     };
 
     /// _removeOrder function
-
-    /// _removeOrder function
-    ///      Returns
-    ///           amount_token0 : amount of base token received for  order tick shares
-    ///           amount_token1: amount of quote token received for order tick shares
-    ///    NOTE:if both amount_token0 and amount_token1 is not  equal to zero this corresponds to partially filled order
-
-    ///    returns null if Order references an uninitialised tick ( see _removeOrder in OrderLib)
-
+    ///
+    /// _removeOrder function.
+    ///      Returns.
+    ///           amount_token0 : amount of base token received for  order tick shares.
+    ///           amount_token1: amount of quote token received for order tick shares.
+    ///    NOTE:if both amount_token0 and amount_token1 is not  equal to zero this corresponds to partially filled order .
+    ///
+    ///    returns null if Order references an uninitialised tick ( see _removeOrder in OrderLib) .
+    ///
     ///
 
     private func _removeOrder(order_details : Types.OrderDetails) : ?(amount_token0 : Nat, amount_token1 : Nat) {
@@ -443,20 +482,28 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     };
 
     ///  _openPosition function
-
-    // @dev Position token is the token being longed (token out) while Debt token is the token being shorted (token in)
-
-    ///    returns
-
-    ///    order_size = the amount of Position token  received for the leveraged swap
-    ///     resulting_debt = the amount of Debt token borrowed that is actually  utilised  (debt reduces by amount_remaining)
-
-    ///    returns null if
-    ///        user already has a position
-    ///        if amount_remaining after swap is equal or exceeds debt
+    ///
+    ///  @dev Position token is the token being longed (token out) while Debt token is the token being shorted (token in)
+    ///
+    ///    returns.
+    ///
+    ///    order_size = the amount of Position token  received for the leveraged swap .
+    ///
+    ///    amount_remaining = the amount of Debt token borrowed that is actually  utilised  (debt reduces by amount_remaining)
+    ///
+    ///    returns null if.
+    ///        user already has a position.
+    ///
+    ///        if amount_remaining after swap is equal or exceeds debt.
     ///
 
-    private func _openPosition(user : Principal, collateral : Nat, debt : Nat, max_tick : Nat, is1in0out : Bool) : async ?(order_size : Nat, resulting_debt : Nat) {
+    private func _openPosition(
+        user : Principal,
+        collateral : Nat,
+        debt : Nat,
+        max_tick : Nat,
+        is1in0out : Bool,
+    ) : async (Nat, Nat) {
 
         let debt_token = if (is1in0out) {
             market_details.token1;
@@ -464,21 +511,18 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
             market_details.token0;
         };
 
-        if (await vault.userHasPosition(caller, Principal.fromActor(this))) {
-            return null;
-        };
         var order_value = collateral + debt;
 
         let (amount_out, amount_remaining) = _swap(order_value, max_tick, is1in0out);
 
         // should fail if debt was not utilised
         if (amount_remaining >= debt) {
-            return ?(amount_out, amount_remaining);
+            return (amount_out, amount_remaining);
         };
 
         let position_details : Types.PositionDetails = {
             debt_token = debt_token;
-            owner = caller;
+            owner = user;
             is1in0out = is1in0out;
             debt = debt - amount_remaining;
             order_size = amount_out;
@@ -487,7 +531,7 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
         };
 
         ignore vault.updatePosition(user, Principal.fromActor(this), debt_token, ?position_details, 0, 0);
-        return ?(position_details.order_size, position_details.debt);
+        return (position_details.order_size, amount_remaining);
 
     };
 
@@ -524,13 +568,19 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
                 time = Time.now();
             };
 
+            let fee_collected : Nat = if (amount_out > position_details.debt) {
+                amount_out - position_details.debt;
+            } else {
+                0;
+            };
+
             ignore vault.updatePosition(
                 position_details.owner,
                 Principal.fromActor(this),
                 position_details.debt_token,
                 ?new_position_details,
                 amount_out,
-                0,
+                fee_collected,
             );
         } else {
             // if amount_out is just sufficient enough to cover total debt debt ;
@@ -549,9 +599,16 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
 
     };
 
+    private func _isApprovedLiqudator(id : Principal) : Bool {
+        switch (approved_liquidators.get(id)) {
+            case (?_) { return true };
+            case (_) { false };
+        };
+    };
+
     // ===== asset management_functions ============
 
-    ///NOTE: user account is identified as an ICRC Account with owner as Market actor and subaccount
+    ///NOTE: user account is identified as an ICRC Account with owner as Vault actor and subaccount
     /// made from converting user principal to Blob
     /// eg
     //   let account = {
@@ -563,15 +620,16 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     // @dev moves asset from user account into main or null account and await the result
     //returns true if transaction was successful or false otherwise .
 
-    private func _send_asset_in(user : Principal, asset_principal : Principal, amount : Nat) : async Bool {
+    private func _send_asset_in(user : Principal, assetID : Principal, amount : Nat, fee : Nat) : async Bool {
         if (amount == 0) {
             return true;
         };
+
         let account = {
             owner = Principal.fromActor(vault);
             subaccount = null;
         };
-        return await vault.move_asset(asset_principal, amount, ?Principal.toBlob(user), account);
+        return await vault.move_asset(assetID, amount + fee, ?Principal.toLedgerAccount(user, null), account);
 
     };
 
@@ -579,31 +637,38 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     // @dev moves asset from   main or null account to user account and await the result
     //returns true if transaction was successful or false otherwise .
 
-    private func _send_asset_out(user : Principal, asset_principal : Principal, amount : Nat) : async Bool {
+    private func _send_asset_out(user : Principal, assetID : Principal, amount : Nat, fee : Nat) : async Bool {
         if (amount == 0) {
             return true;
         };
+        if (fee >= amount) {
+            return false;
+        };
         let account = {
             owner = Principal.fromActor(vault);
-            subaccount = ?Principal.toBlob(user);
+            subaccount = ?Principal.toLedgerAccount(user, null);
         };
-        return await vault.move_asset(asset_principal, amount, null, account);
+
+        return await vault.move_asset(assetID, amount - fee, null, account);
 
     };
 
     //unchecked_send_asset_out function
     // @dev moves asset from main or null account to user account  but does not await the result
-    // reduces trnsaction time
+    // reduces transaction time
 
-    public func unchecked_send_asset_out(user : Principal, asset_principal : Principal, amount : Nat) : async () {
+    public func unchecked_send_asset_out(user : Principal, assetID : Principal, amount : Nat, fee : Nat) : async () {
         if (amount == 0) {
+            return ();
+        };
+        if (fee >= amount) {
             return ();
         };
         let account = {
             owner = Principal.fromActor(vault);
             subaccount = ?Principal.toBlob(user);
         };
-        ignore vault.unchecked_move_asset(asset_principal, amount, null, account);
+        ignore vault.unchecked_move_asset(assetID, amount - fee, null, account);
 
     };
 

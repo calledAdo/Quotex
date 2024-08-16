@@ -2,7 +2,14 @@ import Principal "mo:base/Principal";
 import HashMap "mo:base/HashMap";
 import Nat "mo:base/Nat";
 import ICRC "../Interface/ICRC";
-import Types "Types"
+import Types "../Interface/Types"
+
+/*
+  Name :Vault Actor
+  Author :CalledDAO
+
+
+*/
 
 shared ({ caller }) actor class Vault(provider : Principal) = this {
 
@@ -19,7 +26,11 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
 
     stable let admin : Principal = caller;
 
+    var update = 0;
+
     stable let margin_provider : Principal = provider;
+
+    // ============= Query functions =========
 
     public query func tokenDetails(asset : Principal) : async AssetDetails {
         //adjust token details accordingly
@@ -36,42 +47,14 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
             };
         };
     };
-    /// userHasPosition function
-    /// query function that checks user has any new_position in that particular token
-    /// returns true if so or false otherwise
 
-    public query func userHasPosition(user : Principal, market : Principal) : async Bool {
+    public query func userMarketPosition(user : Principal, market : Principal) : async ?PositionDetails {
         switch (m_markets_positions.get(market)) {
             case (?res) {
-                switch (res.get(user)) {
-                    case (?res) { return true };
-                    case (_) { return false };
-                };
-            };
-            case (_) {
-                return false;
-            };
-        };
-    };
 
-    /// positionExist function
-    // Checks if a particular users has  a position with position_details in the specific market
-
-    public query func positionExist(user : Principal, market : Principal, position_details : PositionDetails) : async Bool {
-        switch (m_markets_positions.get(market)) {
-            case (?res) {
-                switch (res.get(user)) {
-                    case (?res) {
-                        if (res == position_details) {
-                            return true;
-                        };
-                        return false;
-                    };
-                    case (_) { return false };
-                };
-
+                return res.get(user);
             };
-            case (_) { return false };
+            case (_) { return null };
         };
     };
 
@@ -98,13 +81,13 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
         switch (new_position) {
             case (?new_position) {
 
-                //adjust token details accordingly
+                //adjust token details accordingly //
                 switch (m_assets_details.get(token)) {
                     case (?details) {
                         let new_token_details : AssetDetails = {
                             debt = details.debt + new_position.debt - amount_received;
                             free_liquidity = details.free_liquidity + amount_received - new_position.debt;
-                            lifetime_earnings = details.lifetime_earnings;
+                            lifetime_earnings = details.lifetime_earnings + interest_received;
                         };
                         m_assets_details.put(token, new_token_details);
 
@@ -135,28 +118,43 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
         m_markets_positions.put(market, m_users_position);
     };
 
+    ///
+    public shared ({ caller }) func enoughLiquidity(assetID : Principal, amount : Nat) : async Bool {
+        update += 1;
+        switch (m_assets_details.get(assetID)) {
+            case (?details) {
+                if (details.free_liquidity >= amount) {
+                    return true;
+                };
+                return false;
+            };
+            case (_) { return false };
+        };
+    };
+
     ///_move_asset function
-    /// @dev moves asset from one account to another  and await the result
+    ///
+    /// @dev moves asset from one account to another  and await the result .
+    ///
     ///returns true if transaction was successful or false otherwise .
 
     public shared ({ caller }) func move_asset(asset_principal : Principal, amount : Nat, from_sub : ?Blob, account : ICRC.Account) : async Bool {
-        assert (_approved(caller) or from_sub == ?Principal.toBlob(caller));
+        assert (_approved(caller) or from_sub == ?Principal.toLedgerAccount(caller, null));
         if (amount == 0) {
             return true;
         };
 
-        // only updates asset_details when
-        // assets is being deposited
-        // debt is being removed
+        // only updates asset_details when caller is marginProvider and
         // case (1)subaccount is margin provider in the case of a withdrawal
         // case (2)account subaccount is margin proovider in the case of a deposit
         if (
-
-            from_sub == ?Principal.toBlob(margin_provider) or
-            account.subaccount == ?Principal.toBlob(margin_provider)
+            caller == margin_provider and (
+                from_sub == null or
+                account.subaccount == null
+            )
 
         ) {
-            let out = from_sub == ?Principal.toBlob(margin_provider);
+            let out = from_sub == null;
             switch (_provider_move_asset(amount, asset_principal, out)) {
                 case (false) { return false };
                 case (true) {};
@@ -176,29 +174,36 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
 
         switch (await asset.icrc1_transfer(transferArgs)) {
             case (#Ok(_)) { return true };
-            case (#Err(_)) { return false };
+            case (#Err(_)) {
+                return false;
+            };
         };
 
     };
 
-    ///////////
+    ///_move_asset function
+    ///
+    /// @dev moves asset from one account to another  and await the result .
+    ///
+    ///returns true if transaction was successful or false otherwise .
 
     public shared ({ caller }) func unchecked_move_asset(asset_principal : Principal, amount : Nat, from_sub : ?Blob, account : ICRC.Account) : async () {
-        assert (_approved(caller) or from_sub == ?Principal.toBlob(caller));
+        assert (_approved(caller) or from_sub == ?Principal.toLedgerAccount(caller, null));
         if (amount == 0) {
             return ();
         };
 
-        // only updates asset_details when
-        // assets is being deposited
-        // asset is being withdrawn
+        // only updates asset_details caller is margiin provider and
         // case (1)subaccount is margin provider in the case of a withdrawal
         // case (2)account subaccount is margin proovider in the case of a deposit
+
         if (
-            from_sub == ?Principal.toBlob(margin_provider) or
-            account.subaccount == ?Principal.toBlob(margin_provider)
+            caller == margin_provider and (
+                from_sub == ?Principal.toLedgerAccount(margin_provider, null) or
+                account.subaccount == ?Principal.toLedgerAccount(margin_provider, null)
+            )
         ) {
-            let out = from_sub == ?Principal.toBlob(margin_provider);
+            let out = from_sub == ?Principal.toLedgerAccount(margin_provider, null);
             switch (_provider_move_asset(amount, asset_principal, out)) {
                 case (false) { return () };
                 case (true) {};
@@ -232,9 +237,15 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
     private func _provider_move_asset(amount : Nat, asset : Principal, out : Bool) : Bool {
         let token_details : AssetDetails = switch (m_assets_details.get(asset)) {
             case (?res) { res };
-            case (_) { return false };
+            case (_) {
+                {
+                    debt = 0;
+                    free_liquidity = 0;
+                    lifetime_earnings = 0;
+                };
+            };
         };
-        if (amount > token_details.free_liquidity) {
+        if (out and amount > token_details.free_liquidity) {
             return false;
         };
 

@@ -1,6 +1,22 @@
 import Nat64 "mo:base/Nat64";
 
-///counting from left to right i.e 1....64
+/*
+
+*Name:Bit library
+*Author :CalledDao
+
+*/
+
+/// Overview
+/// The Bit Library is used for utilised with the Bitmap library for tracking next possible tick
+/// core functions
+/// most_significant_bit_position :finding the position from (1-99) of the most significant bit position
+/// (position of the rightmost bit set to 1)
+
+/// least-significant_bit_position :finding the position from (1-99) of the least significant bit
+///(position of the leftmost bit set to 1)
+///NOTE :counting is from right to left (1...99)
+
 module {
 
     public func most_significant_bit_position(num : Nat64, sub : Nat) : Nat {

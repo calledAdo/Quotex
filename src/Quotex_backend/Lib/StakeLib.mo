@@ -1,10 +1,35 @@
-import Types "../MarginProvider/Types";
+import Types "../Interface/Types";
 import C "Calculations";
 import Constants "Constants";
 import HashMap "mo:base/HashMap";
 import Buffer "mo:base/Buffer";
 import Time "mo:base/Time";
 
+/*
+
+  Name :Stake library
+  Author :CalledDao
+
+*/
+
+/// Overview
+
+/// Stake library is utilised in the MarginProvider actor for implementing staking mechanisms,
+/// Quotex utilises a similar approach to the synthetix staking mechanism by allocating reward per token staked for
+/// the entire staking duration.
+///
+/// #Concepts
+///
+/// #Borrowers.
+/// Borrowers deposit their assets into quotex and allow to traders to borrow and pay interest
+/// thereby allowing traders to trade on margin.
+/// borrowers deposit theri assetID and get their p_asset eg pBTC as a derivative ,this can then be locked to earn extra yields.
+///
+/// #Spans : Spans are different durations for which liquidity can be locked currently 1 year,2 months and 6 months,
+/// users(borrowers) deposit their token and get the p-assetID equivalent which then can lock for any of the
+/// specified duration and earn extra yields (currently 40% of the interest paid by traders )
+/// while the remaining 60% is shared by all depositors
+///
 module {
     let YEAR = 31_536_000_000_000_000; //(10 ** 9) * 60 * 60 * 24 * 365;
     let MONTH = 2_628_000_000_000_000;
@@ -24,7 +49,7 @@ module {
 
         let current_earnings : Nat = lifetime_earnings - asset_staking_details.prev_lifetime_earnings;
 
-        let (stake_lifetime_earnings : Nat, _, _, new_asset_staking_details : AssetStakingDetails) = _updateAssetStake(
+        let (span_lifetime_earnings : Nat, _, _, new_asset_staking_details : AssetStakingDetails) = _updateAssetStake(
             asset_staking_details,
             user_stake.span,
             current_earnings,
@@ -32,7 +57,7 @@ module {
             false,
         );
 
-        let user_earnings : Nat = (user_stake.amount * (stake_lifetime_earnings - user_stake.pre_earnings)) / BASE_UNITS;
+        let user_earnings : Nat = (user_stake.amount * (span_lifetime_earnings - user_stake.pre_earnings)) / BASE_UNITS;
 
         return (user_earnings, new_asset_staking_details);
     };
@@ -41,7 +66,7 @@ module {
         user : Principal,
         m_users_stakes : HashMap.HashMap<Principal, Buffer.Buffer<UserStake>>,
         asset_staking_details : AssetStakingDetails,
-        asset : Principal,
+        assetID : Principal,
         lifetime_earnings : Nat,
         amount : Nat,
         span : StakeSpan,
@@ -55,7 +80,12 @@ module {
         let current_earnings : Nat = lifetime_earnings - asset_staking_details.prev_lifetime_earnings;
 
         ////
-        let (span_lifetime_earnings : Nat, expiry_time, init_total_locked : Nat, new_asset_stake_details : AssetStakingDetails) = _updateAssetStake(
+        let (
+            span_lifetime_earnings : Nat,
+            expiry_time,
+            init_total_locked : Nat,
+            new_asset_stake_details : AssetStakingDetails,
+        ) = _updateAssetStake(
             asset_staking_details,
             span,
             current_earnings,
@@ -67,7 +97,7 @@ module {
             span_lifetime_earnings;
         };
         let new_user_stake : UserStake = {
-            asset = asset;
+            assetID = assetID;
             span = span;
             amount = amount;
             pre_earnings = pre_earnings;
@@ -107,7 +137,7 @@ module {
                 new_stake_details.span0_details := new_span_details;
                 return (
                     new_span_details.lifetime_earnings,
-                    0, //adjust
+                    0,
                     span0_details.total_locked,
                     new_stake_details,
                 ) // locked_amount;
@@ -180,8 +210,8 @@ module {
     ) : Types.Details {
 
         let (percentage : Nat, share : Nat, div : Nat) = switch (span_share) {
-            case (?res) { (25000, res, 20) };
-            case (_) { (75000, 1, 1) };
+            case (?res) { (40000, res, 20) };
+            case (_) { (60000, 1, 1) };
         };
 
         let init_total_locked = if (specific_SpanDetails.total_locked == 0) {

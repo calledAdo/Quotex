@@ -13,8 +13,10 @@ module {
     public type MarketDetails = {
         token0 : Principal;
         token0_decimal : Nat;
+        token0_fee : Nat;
         token1 : Principal;
         token1_decimal : Nat;
+        token1_fee : Nat;
         tick_spacing : Nat;
         base_price_multiplier : Nat;
         margin_provider : Principal;
@@ -26,7 +28,7 @@ module {
         interest_rate : Nat;
         token0_spam_fee : Nat;
         token1_spam_fee : Nat;
-        max_leverage : Nat;
+        max_leverageX10 : Nat;
     };
 
     public type TickDetails = {
@@ -100,6 +102,37 @@ module {
         collateral_token : Principal;
         collateral : Nat;
         debt : Nat;
+    };
+
+    public type AssetDetails = {
+        debt : Nat;
+        free_liquidity : Nat;
+        lifetime_earnings : Nat;
+    };
+
+    public type AssetStakingDetails = {
+        //derivatiev asset
+        derivID : Principal;
+        var prev_lifetime_earnings : Nat;
+        var span0_details : Details;
+        var span2_details : Details;
+        var span6_details : Details;
+        var span12_details : Details;
+    };
+
+    public type StakeSpan = { #None; #Month2; #Month6; #Year };
+
+    public type UserStake = {
+        assetID : Principal;
+        span : StakeSpan;
+        amount : Nat;
+        pre_earnings : Nat;
+        expiry_time : Int;
+    };
+
+    public type Details = {
+        lifetime_earnings : Nat;
+        total_locked : Nat;
     };
 
 };

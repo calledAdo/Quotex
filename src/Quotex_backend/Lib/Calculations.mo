@@ -1,10 +1,19 @@
 import Time "mo:base/Time";
 import Constants "Constants";
 
+/// Helper functions utilised for within libraries and core Actors
+
 module {
     let C = Constants;
 
-    ///
+    /// mulandBit function
+
+    /// returns the multiplier and bit position of a tick
+    /// params
+    /*
+      tick : the reference tick
+      tick_spacing : the value of between adjacent bits in a bitmap
+    */
     public func mulAndBit(tick : Nat, tick_spacing : Nat) : (multiplier : Nat, bit_position : Nat) {
 
         let multiplier = tick / (C.HUNDRED_PERCENT * tick_spacing);
@@ -13,6 +22,14 @@ module {
         return (multiplier, bit_position);
     };
 
+    /// defMaxTick function
+    /// returns the default max tick for any swap
+    /// params
+    /*
+         current_tick :the current tick
+         in1out0 :true if buying and false if selling
+    */
+
     public func defMaxTick(current_tick : Nat, in1out0 : Bool) : Nat {
         if (in1out0) {
             current_tick + (50 * C.HUNDRED_PERCENT);
@@ -20,6 +37,15 @@ module {
             current_tick - (50 * C.HUNDRED_PERCENT);
         };
     };
+
+    /// exceeded function
+    /// checks if the stopping tick (max tick ) has been exceeded for either a buy swap or a sell swap
+    /// params
+    /*
+         stopping_tick :the current stopping tick
+         current_tick :the current tick
+         in1out0 :true if buying and false if selling
+    */
 
     public func exceeded(stopping_tick : Nat, current_tick : Nat, in1out0 : Bool) : Bool {
         switch (in1out0) {
@@ -36,7 +62,17 @@ module {
         };
     };
 
-    public func calcInterest(amount : Nat, interest_rate : Nat, start_time : Int) : Nat {
+    /// calcInterest function
+    /// calculates the interest owed on a position given the debt
+    /// params
+    /*
+         debt:The debt owed
+         interest_rate : the interest of the position
+         start_time :the position start time (when position was opened)
+
+    */
+
+    public func calcInterest(debt : Nat, interest_rate : Nat, start_time : Int) : Nat {
 
         var fee = 0;
         let one_hour = 3600 * (10 ** 9);
@@ -45,7 +81,7 @@ module {
         let current_time = Time.now();
 
         while (starting_time < current_time) {
-            fee += (interest_rate * amount) / (100 * C.HUNDRED_BASIS_POINT);
+            fee += (interest_rate * debt) / (C.HUNDRED_PERCENT);
             starting_time += one_hour;
         };
 
@@ -77,6 +113,7 @@ module {
         return (shares * init_liquidity) / init_total_shares;
     };
 
+    /// calculates x percentage of amount
     public func percentage(x : Nat, amount : Nat) : Nat {
         return (x * amount) / C.HUNDRED_PERCENT;
     };

@@ -1,21 +1,43 @@
-import Types "../Market/Types";
+import Types "../Interface/Types";
 import BitMap "BitMap";
 import PriceLib "PriceLib";
 
-import F "Calculations";
+import Calc "Calculations";
+
+/*
+
+  Name :Swap library
+  Author :CalledDao
+
+*/
+
+/// Overview
+///
+/// Swap library is utilised for swaps (Market orders);
+/// The Market price can change during a swap by exhausting the available liquidity at a particular tick
+/// but the amount in still remains
+/// This would push the price to the next tick with liquidity and the swap continues there till
+/// amount remaining is zero or the max tick is exceeded
 
 module {
+    type SwapParams = Types.SwapParams;
+    type SwapConstants = Types.SwapConstants;
+    type SwapResult = Types.SwapResult;
+    type SwapAtTickResult = Types.SwapAtTickResult;
+
+    let (exceeded, mulAndBit) = (Calc.exceeded, Calc.mulAndBit);
 
     /// swap function
+    /// params contains
 
-    public func swap(params : Types.SwapParams, constants : Types.SwapConstants) : Types.SwapResult {
+    public func swap(params : SwapParams, constants : SwapConstants) : SwapResult {
 
         var current_tick = params.init_tick;
 
         var amount_out = 0;
         var amount_remaining = params.amount_in;
 
-        label swaploop while (not F.exceeded(params.stopping_tick, current_tick, params.in1out0)) {
+        label swaploop while (not exceeded(params.stopping_tick, current_tick, params.in1out0)) {
 
             // create  new swap parameters  for every new iteration of the loop
             let new_params = {
@@ -30,20 +52,17 @@ module {
             //
             let swap_result = swap_at_tick(new_params, constants);
 
-            // m_multipliers_bitmaps := swap_result.new_bitmaps;
-
-            //
             amount_out += swap_result.amount_out;
 
             amount_remaining := swap_result.amount_remaining;
 
-            //break loop
+            //break loop if amount remaining is 0
             if (amount_remaining == 0) {
                 break swaploop;
             };
 
             //
-            let (current_multiplier, _) = F.mulAndBit(current_tick, constants.tick_spacing);
+            let (current_multiplier, _) = mulAndBit(current_tick, constants.tick_spacing);
             //m_multipliers_bitmaps for current multiplier ;
             let current_bitmap : Nat = switch (params.m_multipliers_bitmaps.get(current_multiplier)) {
                 case (?res) { res };
@@ -68,7 +87,10 @@ module {
         };
     };
 
-    private func swap_at_tick(params : Types.SwapParams, constants : Types.SwapConstants) : Types.SwapAtTickResult {
+    /// swap at tick
+    /// returns that amount gotten and amount remaining from swapping at a partiular tick
+
+    private func swap_at_tick(params : SwapParams, constants : SwapConstants) : SwapAtTickResult {
 
         //var amount out = set to zero
         var amount_out = 0;
@@ -93,20 +115,24 @@ module {
             case (true) { current_tick_details.liquidity_token0 };
             case (false) { current_tick_details.liquidity_token1 };
         };
-        // get the equivalent amount of token equivalent to liquidity (base or quote token ,depending on buy or sell trade)
+        // get the equivalent amount of token equivalent to liquidity (token0 or token1 ,depending on buy or sell trade)
         let init_liquidity_equivalent = PriceLib._equivalent(
             init_tick_liquidity,
             tick_price,
+            //if buying init_liquidity equivalent would   be the amount of token1 to get for converting all the liquidity of token0 at that tick to token1 at the current tick price
             not params.in1out0,
             constants.token0_decimal,
             constants.token1_decimal,
         );
 
+        // if liquidity at that particular tick is not enough for to cover the entire amount in
+        // change all liquidity at that tick either from token0 to token1 for a buy swap or vice versa
+
         if (init_liquidity_equivalent <= params.amount_in) {
 
             amount_out := init_tick_liquidity;
 
-            //set amount_remaining = amount_in - Init liquidity
+            //reduce amount_remaining  by Init liquidity
             amount_remaining -= init_liquidity_equivalent;
 
             let new_tick_details = switch (params.in1out0) {
