@@ -1,14 +1,3 @@
-account1 = {
-address = principal gvphd-z5ozt-rcgex-clrhh-2d6y3-j3eni-346vu-lde5d-iokcr-gy2ad-5qe
-subaccount = blob \6a\6c\bf\1f\1a\c1\56\54\5e\26\5d\dc\e8\d9\36\9d\ea\05\5b\e9\45\ba\14\27\ce\4c\89\67\45\29\55\d0  
-}
-
-account2 = {
-principal = ahrng-v5kxc-f45nx-5bpp4-xsbul-bfqqd-knx6g-y5lcx-qroyz-c5wxd-dqe;
-subaccount = blob \fc\21\22\4f\64\a0\3f\64\4c\41\6a\c6\2a\94\7e\7a\a5\bc\5f\d1\bf\90\08\d2\77\cd\b4\7c\73\6d\7f\69
-
-}
-
 ```bash
     dfx canister create --all
 ```
@@ -67,7 +56,7 @@ export FEATURE_FLAGS=false
 export ARCHIVE_CONTROLLER=ahrng-v5kxc-f45nx-5bpp4-xsbul-bfqqd-knx6g-y5lcx-qroyz-c5wxd-dqe
 
 
-dfx deploy token1 --argument "(variant {Init = record {decimals = opt 8;token_symbol = \"${TOKEN_SYMBOL}\";transfer_fee = ${TRANSFER_FEE};metadata = vec {};minting_account = record { owner = principal \"${ACCOUNT1_PRINCIPAL}\" ; subaccount = opt blob \"\6a\6c\bf\1f\1a\c1\56\54\5e\26\5d\dc\e8\d9\36\9d\ea\05\5b\e9\45\ba\14\27\ce\4c\89\67\45\29\55\d0\"};
+dfx deploy token0 --argument "(variant {Init = record {decimals = opt 8;token_symbol = \"${TOKEN_SYMBOL}\";transfer_fee = ${TRANSFER_FEE};metadata = vec {};minting_account = record { owner = principal \"${ACCOUNT1_PRINCIPAL}\" ; subaccount = opt blob \"\6a\6c\bf\1f\1a\c1\56\54\5e\26\5d\dc\e8\d9\36\9d\ea\05\5b\e9\45\ba\14\27\ce\4c\89\67\45\29\55\d0\"};
 initial_balances = vec { record { record { owner = principal \"${ACCOUNT2_PRINCIPAL}\" ; subaccount = opt blob \"\fc\21\22\4f\64\a0\3f\64\4c\41\6a\c6\2a\94\7e\7a\a5\bc\5f\d1\bf\90\08\d2\77\cd\b4\7c\73\6d\7f\69\" ;}; ${PRE_MINTED_TOKENS}; }; };archive_options = record {num_blocks_to_archive = ${NUM_OF_BLOCK_TO_ARCHIVE};trigger_threshold = ${TRIGGER_THRESHOLD};controller_id = principal \"${ARCHIVE_CONTROLLER}\";
 cycles_for_archive_creation = opt ${CYCLE_FOR_ARCHIVE_CREATION};};token_name = \"${TOKEN_NAME}\";feature_flags = opt record{icrc2 = ${FEATURE_FLAGS}};}
 })"
@@ -106,7 +95,7 @@ approve market
 place order
 
 ```bash
-  dfx canister call Market placeOrder "(1_000_000_000,200000000)"
+  dfx canister call Market placeOrder "(1_000_000_000,199620000)"
 
 ```
 

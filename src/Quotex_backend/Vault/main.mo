@@ -1,6 +1,7 @@
 import Principal "mo:base/Principal";
 import HashMap "mo:base/HashMap";
 import Nat "mo:base/Nat";
+import Iter "mo:base/Iter";
 import ICRC "../Interface/ICRC";
 import Types "../Interface/Types"
 
@@ -18,13 +19,17 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
     type UsersPositionMap = HashMap.HashMap<Principal, PositionDetails>;
     type AssetDetails = Types.AssetDetails;
 
-    let m_assets_details = HashMap.HashMap<Principal, AssetDetails>(1, Principal.equal, Principal.hash);
+    stable var upgrade_asset_details : [(Principal, AssetDetails)] = [];
 
-    let m_markets_positions = HashMap.HashMap<Principal, UsersPositionMap>(1, Principal.equal, Principal.hash);
+    var m_assets_details = HashMap.HashMap<Principal, AssetDetails>(1, Principal.equal, Principal.hash);
 
-    let approved = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
+    stable var upgraded_approvals : [(Principal, Bool)] = [];
+
+    var m_approval = HashMap.HashMap<Principal, Bool>(1, Principal.equal, Principal.hash);
 
     stable let admin : Principal = caller;
+
+    stable var not_paused = true;
 
     var update = 0;
 
@@ -48,45 +53,26 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
         };
     };
 
-    public query func userMarketPosition(user : Principal, market : Principal) : async ?PositionDetails {
-        switch (m_markets_positions.get(market)) {
-            case (?res) {
+    /// updatedPosition function
 
-                return res.get(user);
-            };
-            case (_) { return null };
-        };
-    };
-
-    /// updatePosition function
-
-    public shared ({ caller }) func updatePosition(
-        user : Principal,
-        market : Principal,
+    public shared ({ caller }) func updatedPosition(
         token : Principal,
-        new_position : ?PositionDetails,
+        new_debt : ?Nat,
         amount_received : Nat,
         interest_received : Nat,
     ) : async () {
-        assert (_approved(caller));
-        // get all positions for that particular market
-        let m_users_position : UsersPositionMap = switch (m_markets_positions.get(market)) {
-            case (?res) { res };
-            case (_) {
-                HashMap.HashMap<Principal, PositionDetails>(1, Principal.equal, Principal.hash);
-            };
-        };
+        assert (_approved(caller) and not_paused);
 
         // checks if position is being put in or removed
-        switch (new_position) {
-            case (?new_position) {
+        switch (new_debt) {
+            case (?new_debt) {
 
                 //adjust token details accordingly //
                 switch (m_assets_details.get(token)) {
                     case (?details) {
                         let new_token_details : AssetDetails = {
-                            debt = details.debt + new_position.debt - amount_received;
-                            free_liquidity = details.free_liquidity + amount_received - new_position.debt;
+                            debt = details.debt + new_debt - amount_received;
+                            free_liquidity = details.free_liquidity + amount_received - new_debt;
                             lifetime_earnings = details.lifetime_earnings + interest_received;
                         };
                         m_assets_details.put(token, new_token_details);
@@ -94,8 +80,6 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
                     };
                     case (_) { return () };
                 };
-                //puts the psosition
-                m_users_position.put(user, new_position);
 
             };
             case (_) {
@@ -111,11 +95,9 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
                     };
                     case (_) {};
                 };
-                //if null its deleting
-                m_users_position.delete(user);
             };
         };
-        m_markets_positions.put(market, m_users_position);
+
     };
 
     ///
@@ -139,6 +121,7 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
     ///returns true if transaction was successful or false otherwise .
 
     public shared ({ caller }) func move_asset(asset_principal : Principal, amount : Nat, from_sub : ?Blob, account : ICRC.Account) : async Bool {
+        assert (not_paused);
         assert (_approved(caller) or from_sub == ?Principal.toLedgerAccount(caller, null));
         if (amount == 0) {
             return true;
@@ -150,12 +133,15 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
         if (
             caller == margin_provider and (
                 from_sub == null or
-                account.subaccount == null
+                account == {
+                    owner = Principal.fromActor(this);
+                    subaccount = null;
+                }
             )
 
         ) {
             let out = from_sub == null;
-            switch (_provider_move_asset(amount, asset_principal, out)) {
+            switch (_update_asset_details(amount, asset_principal, out)) {
                 case (false) { return false };
                 case (true) {};
             };
@@ -181,60 +167,47 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
 
     };
 
-    ///_move_asset function
-    ///
-    /// @dev moves asset from one account to another  and await the result .
-    ///
-    ///returns true if transaction was successful or false otherwise .
-
-    public shared ({ caller }) func unchecked_move_asset(asset_principal : Principal, amount : Nat, from_sub : ?Blob, account : ICRC.Account) : async () {
-        assert (_approved(caller) or from_sub == ?Principal.toLedgerAccount(caller, null));
-        if (amount == 0) {
-            return ();
-        };
-
-        // only updates asset_details caller is margiin provider and
-        // case (1)subaccount is margin provider in the case of a withdrawal
-        // case (2)account subaccount is margin proovider in the case of a deposit
-
-        if (
-            caller == margin_provider and (
-                from_sub == ?Principal.toLedgerAccount(margin_provider, null) or
-                account.subaccount == ?Principal.toLedgerAccount(margin_provider, null)
-            )
-        ) {
-            let out = from_sub == ?Principal.toLedgerAccount(margin_provider, null);
-            switch (_provider_move_asset(amount, asset_principal, out)) {
-                case (false) { return () };
-                case (true) {};
-            };
-        };
-
-        let asset : ICRC.Actor = actor (Principal.toText(asset_principal));
-
-        let transferArgs : ICRC.TransferArg = {
-            from_subaccount = from_sub;
-            to = account;
-            amount = amount;
-            fee = null;
-            memo = null;
-            created_at_time = null;
-        };
-
-        ignore asset.icrc1_transfer(transferArgs);
-
-    };
-
     //========== Admin functions ==========
 
-    public shared ({ caller }) func approvePrincipal(principal : Principal) : async () {
+    public shared ({ caller }) func approvePrincipal(principal : Principal, status : Bool) : async () {
+        assert (caller == admin and not_paused);
+        m_approval.put(principal, status);
+    };
+    // ========== Updating functions ===========
+
+    /// pre upgrade function
+
+    public shared ({ caller }) func pre_upgrade() : () {
         assert (caller == admin);
-        approved.put(principal, true);
+        upgrade_asset_details := Iter.toArray(m_assets_details.entries());
+        upgraded_approvals := Iter.toArray(m_approval.entries());
+        not_paused := false;
+    };
+
+    /// post upgrade fucntion
+
+    public shared ({ caller }) func post_upgrade() : () {
+        assert (caller == admin);
+        m_assets_details := HashMap.fromIter<Principal, AssetDetails>(
+            upgrade_asset_details.vals(),
+            upgrade_asset_details.size(),
+            Principal.equal,
+            Principal.hash,
+        );
+        upgrade_asset_details := [];
+        m_approval := HashMap.fromIter<Principal, Bool>(
+            upgraded_approvals.vals(),
+            upgraded_approvals.size(),
+            Principal.equal,
+            Principal.hash,
+        );
+        not_paused := true;
+
     };
 
     // ============  Private functions ===========
 
-    private func _provider_move_asset(amount : Nat, asset : Principal, out : Bool) : Bool {
+    private func _update_asset_details(amount : Nat, asset : Principal, out : Bool) : Bool {
         let token_details : AssetDetails = switch (m_assets_details.get(asset)) {
             case (?res) { res };
             case (_) {
@@ -267,7 +240,7 @@ shared ({ caller }) actor class Vault(provider : Principal) = this {
         if (identifier == admin or identifier == margin_provider) {
             return true;
         };
-        switch (approved.get(identifier)) {
+        switch (m_approval.get(identifier)) {
             case (?_) { true };
             case (_) { false };
         };

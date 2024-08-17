@@ -1,11 +1,5 @@
-import HashMap "mo:base/HashMap";
-import F "Lib/Calculations";
-import Nat "mo:base/Nat";
 import Principal "mo:base/Principal";
 import Blob "mo:base/Blob";
-import Types "./Interface/Types";
-import OrderLib "Lib/OrderLib";
-import SwapLib "Lib/SwapLib";
 
 actor {
 

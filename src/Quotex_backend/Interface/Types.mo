@@ -5,6 +5,28 @@ import Text "mo:base/Text";
 import Principal "mo:base/Principal";
 module {
 
+    public type MarketInspect = {
+        arg : Blob;
+        caller : Principal;
+        msg : {
+            #pre_upgrade1 : () -> ();
+            #pre_upgrade2 : () -> ();
+            #post_upgrade1 : () -> ();
+            #post_upgrade2 : () -> ();
+            #changeLiquidatorStatus : () -> (Principal, Bool);
+            #closePosition : () -> Principal;
+            #getBestOffers : () -> ();
+            #getUserOrders : () -> Principal;
+            #openPosition : () -> (Nat, Nat, Bool, ?Nat);
+            #placeOrder : () -> (Nat, Nat);
+            #removeOrder : () -> Nat;
+            #swap : () -> (Nat, ?Nat, Bool);
+            #swapResult : () -> (Nat, Bool);
+            #tickDetails : () -> Nat;
+            #updateState : () -> (?StateDetails, ?Nat);
+        };
+    };
+
     public func natHash(x : Nat) : Hash.Hash {
         let text = Nat.toText(x);
         return Text.hash(text);
@@ -114,10 +136,10 @@ module {
         //derivatiev asset
         derivID : Principal;
         var prev_lifetime_earnings : Nat;
-        var span0_details : Details;
-        var span2_details : Details;
-        var span6_details : Details;
-        var span12_details : Details;
+        var span0_details : SpanDetails;
+        var span2_details : SpanDetails;
+        var span6_details : SpanDetails;
+        var span12_details : SpanDetails;
     };
 
     public type StakeSpan = { #None; #Month2; #Month6; #Year };
@@ -130,7 +152,7 @@ module {
         expiry_time : Int;
     };
 
-    public type Details = {
+    public type SpanDetails = {
         lifetime_earnings : Nat;
         total_locked : Nat;
     };

@@ -1,8 +1,6 @@
 import Types "../Interface/Types";
 import C "Calculations";
 import Constants "Constants";
-import HashMap "mo:base/HashMap";
-import Buffer "mo:base/Buffer";
 import Time "mo:base/Time";
 
 /*
@@ -34,6 +32,7 @@ module {
     let YEAR = 31_536_000_000_000_000; //(10 ** 9) * 60 * 60 * 24 * 365;
     let MONTH = 2_628_000_000_000_000;
 
+    type SpanDetails = Types.SpanDetails;
     type UserStake = Types.UserStake;
     type AssetStakingDetails = Types.AssetStakingDetails;
     type StakeSpan = Types.StakeSpan;
@@ -62,23 +61,14 @@ module {
         return (user_earnings, new_asset_staking_details);
     };
 
-    public func createUserStake(
-        user : Principal,
-        m_users_stakes : HashMap.HashMap<Principal, Buffer.Buffer<UserStake>>,
+    public func createStake(
         asset_staking_details : AssetStakingDetails,
         assetID : Principal,
         lifetime_earnings : Nat,
         amount : Nat,
         span : StakeSpan,
-    ) : (new_asset_stake_details : AssetStakingDetails) {
-
-        let user_stakes = switch (m_users_stakes.get(user)) {
-            case (?res) { res };
-            case (_) { Buffer.Buffer<UserStake>(2) };
-        };
-
+    ) : (stake : UserStake, new_asset_stake_details : AssetStakingDetails) {
         let current_earnings : Nat = lifetime_earnings - asset_staking_details.prev_lifetime_earnings;
-
         ////
         let (
             span_lifetime_earnings : Nat,
@@ -96,16 +86,15 @@ module {
         let pre_earnings = if (init_total_locked == 0) { 0 } else {
             span_lifetime_earnings;
         };
-        let new_user_stake : UserStake = {
+        let new_stake : UserStake = {
             assetID = assetID;
             span = span;
             amount = amount;
             pre_earnings = pre_earnings;
             expiry_time = expiry_time;
         };
-        user_stakes.add(new_user_stake);
-        m_users_stakes.put(user, user_stakes);
-        return new_asset_stake_details;
+
+        return (new_stake, new_asset_stake_details);
     };
 
     private func _updateAssetStake(
@@ -127,7 +116,7 @@ module {
         switch (specific_span) {
             case (#None) {
                 let span0_details = asset_staking_details.span0_details;
-                let new_span_details : Types.Details = updateSpecificSpan(
+                let new_span_details : SpanDetails = updateSpecificSpan(
                     span0_details,
                     amount,
                     null,
@@ -146,7 +135,7 @@ module {
             /// second case for 2 month slock
             case (#Month2) {
                 let span2_details = asset_staking_details.span2_details;
-                let new_span_details : Types.Details = updateSpecificSpan(
+                let new_span_details : SpanDetails = updateSpecificSpan(
                     span2_details,
                     amount,
                     ?2,
@@ -163,7 +152,7 @@ module {
             };
             case (#Month6) {
                 let span6_details = asset_staking_details.span6_details;
-                let new_span_details : Types.Details = updateSpecificSpan(
+                let new_span_details : SpanDetails = updateSpecificSpan(
                     span6_details,
                     amount,
                     ?6,
@@ -180,7 +169,7 @@ module {
             };
             case (#Year) {
                 let span12_details = asset_staking_details.span12_details;
-                let new_span_details : Types.Details = updateSpecificSpan(
+                let new_span_details : SpanDetails = updateSpecificSpan(
                     span12_details,
                     amount,
                     ?12,
@@ -202,12 +191,12 @@ module {
     /// update Specific span
 
     private func updateSpecificSpan(
-        specific_SpanDetails : Types.Details,
+        specific_SpanDetails : SpanDetails,
         amount : Nat,
         span_share : ?Nat,
         current_earnings : Nat,
         lock : Bool,
-    ) : Types.Details {
+    ) : SpanDetails {
 
         let (percentage : Nat, share : Nat, div : Nat) = switch (span_share) {
             case (?res) { (40000, res, 20) };
