@@ -76,6 +76,13 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
         };
     };
 
+    public query func getUserPosition(user : Principal) : async ?PositionDetails {
+        switch (m_users_position.get(user)) {
+            case (?res) { return ?res };
+            case (_) { return null };
+        };
+    };
+
     /// Query Call returning the estimated result of a swap at the particular time
     // returns the amount out of token to be received and the amount remaining  of the token being swapped
 
@@ -146,11 +153,13 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     // ====== Public functions ======
 
     /// Swap function for executing swaps on the Market orderbook
-
+    ///
     ///  Params
-
+    ///
     ///   amount_in :Amount of token to swap
+    ///
     ///   m_tick :The maximum tick acts as the tick of maximum  executing price (if null the default max tick is used)
+    ///
     ///   in1out0 :true if sending in Quote token for Base Token
     ///
 
@@ -759,11 +768,11 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
     };
     // ====== Syatem function =====
 
-    system func inspect(args : MarketInspect) : Bool {
-        switch (args.msg) {
-            case (#updateState _) { return caller == admin };
-            case (#changeLiquidatorStatus _) { return caller == admin };
-            case _ { return (not (Principal.isAnonymous(caller))) };
-        };
-    };
+    // system func inspect(args : MarketInspect) : Bool {
+    //     switch (args.msg) {
+    //         case (#updateState _) { return caller == admin };
+    //         case (#changeLiquidatorStatus _) { return caller == admin };
+    //         case _ { return (not (Principal.isAnonymous(caller))) };
+    //     };
+    // };
 };

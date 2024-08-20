@@ -1,0 +1,20 @@
+{
+  "MarginProvider": {
+    "ic": "aid6k-6qaaa-aaaag-qkfdq-cai"
+  },
+  "Market": {
+    "ic": "bzjav-gyaaa-aaaag-qkfga-cai"
+  },
+  "Vault": {
+    "ic": "abavw-iyaaa-aaaag-qkfca-cai"
+  },
+  "token0": {
+    "ic": "bfn2e-ryaaa-aaaag-qkfea-cai"
+  },
+  "token1": {
+    "ic": "blpxm-kiaaa-aaaag-qkffa-cai"
+  },
+  "token1_liquid": {
+    "ic": "bxln5-5iaaa-aaaag-qkfha-cai"
+  }
+}
