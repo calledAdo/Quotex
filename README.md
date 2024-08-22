@@ -14,7 +14,7 @@ Deployed Canisters
 ## Test Locally
 
 ```bash
-   dfx canister create -all
+   dfx canister create --all
 ```
 
 Deploy Vault
@@ -30,7 +30,6 @@ Deploy Market specifying both base assets and quote assets as token0 and token1 
 export VAULTID=$(dfx canister id Vault)
 export CURRENT_TICK=199900000
 export BASE_PRICE_MULTIPLIER=10000
-export MARGIN_PROVIDER=$(dfx canister id MarginProvider)
 export TOKEN0=$(dfx canister id token0)
 export TOKEN1=$(dfx canister id token1)
 export TICK_SPACING=1
@@ -40,7 +39,7 @@ export TOKEN0_FEE=10_000
 export TOKEN1_FEE=10_000
 
 
-dfx deploy Market --argument "(record {base_price_multiplier = ${BASE_PRICE_MULTIPLIER};margin_provider = principal \"${MARGIN_PROVIDER}\";tick_spacing = ${TICK_SPACING};token0 = principal \"${TOKEN0}\";token1 = principal \"${TOKEN1}\";token1_decimal = ${TOKEN1_DECIMAL} ;token0_decimal= ${TOKEN0_DECIMAL}; token1_fee = ${TOKEN1_FEE} ; token0_fee = ${TOKEN0_FEE} },principal \"${VAULTID}\",${CURRENT_TICK})"
+dfx deploy Market --argument "(record {base_price_multiplier = ${BASE_PRICE_MULTIPLIER};tick_spacing = ${TICK_SPACING};token0 = principal \"${TOKEN0}\";token1 = principal \"${TOKEN1}\";token1_decimal = ${TOKEN1_DECIMAL} ;token0_decimal= ${TOKEN0_DECIMAL}; token1_fee = ${TOKEN1_FEE} ; token0_fee = ${TOKEN0_FEE} },principal \"${VAULTID}\",${CURRENT_TICK})"
 
 ```
 
@@ -150,7 +149,7 @@ buy Orders
 Swap (returns amount out and amount remaining)
 
 ```bash
-   dfx canister call Market swap "(1_700_000_000 ,null,false)"
+   dfx canister call Market swap "(10_000_000_000 ,null,true)"
 ```
 
 ### STAKING AND MARGIN TRADING :

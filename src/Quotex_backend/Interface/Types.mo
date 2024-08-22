@@ -41,7 +41,6 @@ module {
         token1_fee : Nat;
         tick_spacing : Nat;
         base_price_multiplier : Nat;
-        margin_provider : Principal;
     };
 
     public type StateDetails = {

@@ -700,12 +700,14 @@ shared ({ caller }) actor class Market(details : Types.MarketDetails, vaultID : 
             // if amount_out is just sufficient enough to cover total debt debt ;
             //position should be closed with debt paid in Debt token and all other assets
             //sent to position owner
+            m_users_position.delete(position_details.owner);
             ignore vault.updatedPosition(
                 position_details.debt_token,
                 null,
                 position_details.debt,
                 interest_fee,
             );
+
         };
         return (total_fee, amount_out, amount_remaining);
 
