@@ -1,7 +1,6 @@
 # Quotex
 
-Quotex is a decentralised exchange built on the icp that utilises a fully onchain orderbook to execute swaps on the particular asset pair
-
+Quotex is a decentralised margin trading protocol built on the icp that utilises a fully onchain orderbook to execute swaps on the particular asset pair thereby resulting in MEV resistant and slippage free swaps <br>
 Deployed Canisters
 
 [MarginProvider:](https://a4gq6-oaaaa-aaaab-qaa4q-cai.raw.icp0.io/?id=aid6k-6qaaa-aaaag-qkfdq-cai)<br>
