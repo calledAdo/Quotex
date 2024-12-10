@@ -1,6 +1,6 @@
 # Quotex
 
-Quotex is a decntralised exchange built on the icp that utilises a fully onchian orderbook to execute swaps on the partivular asset
+Quotex is a decentralised exchange built on the icp that utilises a fully onchain orderbook to execute swaps on the particular asset pair
 
 Deployed Canisters
 
